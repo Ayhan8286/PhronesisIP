@@ -32,7 +32,7 @@ python-multipart==0.0.20
 boto3==1.35.93
 
 # Background Jobs
-procrastinate[sqlalchemy]==2.16.0
+inngest==0.4.1
 
 # Utilities
 orjson==3.10.13

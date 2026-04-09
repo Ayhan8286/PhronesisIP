@@ -44,7 +44,7 @@ class Settings(BaseSettings):
     R2_PUBLIC_URL: str = ""  # Custom domain or R2.dev URL
 
     # --- CORS ---
-    CORS_ORIGINS: List[str] = ["http://localhost:3000", "http://localhost:3001"]
+    CORS_ORIGINS: List[str] = ["http://localhost:3000", "http://localhost:3001", "*"]
 
     # --- Background Jobs ---
     WORKER_CONCURRENCY: int = 4

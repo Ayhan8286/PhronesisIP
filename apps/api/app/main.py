@@ -50,6 +50,21 @@ if settings.APP_ENV == "development":
     app.dependency_overrides[get_current_user] = get_dev_user
 
 
+from fastapi.responses import JSONResponse
+
+# --- Exception Handling for Debugging ---
+
+@app.exception_handler(Exception)
+async def global_exception_handler(request, exc):
+    return JSONResponse(
+        status_code=500,
+        content={
+            "detail": f"Internal Server Error: {str(exc)}",
+            "type": type(exc).__name__,
+            "msg": "Check your Vercel Environment Variables or DB connection."
+        },
+    )
+
 @app.get("/health")
 async def health_check():
     return {"status": "healthy", "service": "patentiq-api", "version": "1.0.0", "env": settings.APP_ENV}

@@ -20,7 +20,7 @@
       "destination": "apps/api/index.py"
     },
     {
-      "source": "/(?!api).* ",
+      "source": "/(?!api)(.*)",
       "destination": "apps/web/$1"
     }
   ]

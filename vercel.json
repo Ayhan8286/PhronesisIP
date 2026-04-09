@@ -18,6 +18,10 @@
     {
       "source": "/api/inngest",
       "destination": "apps/api/index.py"
+    },
+    {
+      "source": "/(.*)",
+      "destination": "apps/web/$1"
     }
   ]
 }

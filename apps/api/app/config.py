@@ -17,6 +17,17 @@ class Settings(BaseSettings):
 
     # --- Database (Neon PostgreSQL) ---
     DATABASE_URL: str = "postgresql+asyncpg://user:password@localhost:5432/patentiq"
+
+    @field_validator("DATABASE_URL", mode="before")
+    @classmethod
+    def fix_database_url(cls, v: Any) -> str:
+        if isinstance(v, str):
+            if v.startswith("postgres://"):
+                v = v.replace("postgres://", "postgresql+asyncpg://", 1)
+            elif v.startswith("postgresql://") and "+asyncpg" not in v:
+                v = v.replace("postgresql://", "postgresql+asyncpg://", 1)
+        return v
+
     DATABASE_POOL_SIZE: int = 5
     DATABASE_MAX_OVERFLOW: int = 10
 

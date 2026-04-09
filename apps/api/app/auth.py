@@ -68,6 +68,9 @@ async def get_current_user(
         raise HTTPException(status_code=401, detail="Token has expired")
     except jwt.InvalidTokenError as e:
         raise HTTPException(status_code=401, detail=f"Invalid token: {str(e)}")
+    except Exception as e:
+        # Catch JWKS fetch failures, network errors, etc.
+        raise HTTPException(status_code=401, detail=f"Authentication failed: {str(e)}")
 
     # Extract user info from claims
     clerk_user_id = payload.get("sub")

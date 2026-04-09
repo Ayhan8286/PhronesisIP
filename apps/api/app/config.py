@@ -2,8 +2,10 @@
 Application configuration loaded from environment variables.
 """
 
+from pydantic import field_validator
 from pydantic_settings import BaseSettings
-from typing import List
+from typing import List, Any
+import json
 
 
 class Settings(BaseSettings):
@@ -45,6 +47,19 @@ class Settings(BaseSettings):
 
     # --- CORS ---
     CORS_ORIGINS: List[str] = ["http://localhost:3000", "http://localhost:3001", "*"]
+
+    @field_validator("CORS_ORIGINS", mode="before")
+    @classmethod
+    def parse_cors_origins(cls, v: Any) -> List[str]:
+        if isinstance(v, str):
+            if v.startswith("[") and v.endswith("]"):
+                try:
+                    return json.loads(v)
+                except Exception:
+                    pass
+            # Fallback to comma-separated
+            return [i.strip() for i in v.split(",") if i.strip()]
+        return v
 
     # --- Background Jobs ---
     WORKER_CONCURRENCY: int = 4

@@ -23,10 +23,10 @@ async_session_factory = async_sessionmaker(
     expire_on_commit=False,
 )
 
+SessionLocal = async_session_factory
 
-class Base(DeclarativeBase):
-    """Base class for all SQLAlchemy models."""
-    pass
+
+from app.models.base import Base
 
 
 async def get_db():

@@ -12,6 +12,15 @@ from app.database import engine, Base
 from app.routers import patents, portfolio, drafting, office_actions, prior_art, search, documents
 from app.auth import get_current_user, get_dev_user
 
+import sentry_sdk
+
+if settings.SENTRY_DSN:
+    sentry_sdk.init(
+        dsn=settings.SENTRY_DSN,
+        environment=settings.APP_ENV,
+        traces_sample_rate=1.0 if settings.APP_ENV == "development" else 0.1,
+    )
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):

@@ -4,7 +4,7 @@ Application configuration loaded from environment variables.
 
 from pydantic import field_validator
 from pydantic_settings import BaseSettings
-from typing import List, Any
+from typing import List, Any, Optional
 import json
 
 
@@ -77,7 +77,13 @@ class Settings(BaseSettings):
 
     # --- Redis Cache (Upstash / local) ---
     REDIS_URL: str = ""  # e.g. rediss://default:xxx@xxx.upstash.io:6379
+    # --- Monitoring ---
+    SENTRY_DSN: str = ""
     CACHE_TTL_HOURS: int = 48  # Cache AI responses for 48 hours
+
+    # EPO
+    EPO_CLIENT_ID: Optional[str] = None
+    EPO_CLIENT_SECRET: Optional[str] = None
 
     class Config:
         env_file = ".env"

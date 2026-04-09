@@ -45,6 +45,7 @@ async def ingest_patent_pdf(
     pdf_bytes: bytes,
     patent_id: uuid.UUID,
     firm_id: uuid.UUID,
+    user_id: uuid.UUID,
     db: AsyncSession,
 ) -> dict:
     """
@@ -70,7 +71,7 @@ async def ingest_patent_pdf(
 
     # Step 3: Generate embeddings (batched, 64 at a time)
     chunk_texts = [c["text"] for c in chunks]
-    embeddings = await generate_document_embeddings(chunk_texts)
+    embeddings = await generate_document_embeddings(chunk_texts, firm_id=firm_id, user_id=user_id)
 
     # Step 4: Delete old embeddings, insert new with metadata
     await db.execute(
@@ -101,7 +102,7 @@ async def ingest_patent_pdf(
         )
 
     # Step 5: Generate AI summary
-    summary = await generate_patent_summary(full_text)
+    summary = await generate_patent_summary(full_text, firm_id=firm_id, user_id=user_id)
 
     # Step 6: Update patent record
     patent = await db.get(Patent, patent_id)
@@ -240,6 +241,7 @@ def format_context_for_llm(chunks: List[RetrievedChunk]) -> str:
 async def ingest_patent_from_external(
     patent_data: dict,
     firm_id: uuid.UUID,
+    user_id: uuid.UUID,
     db: AsyncSession,
 ) -> Patent:
     """
@@ -300,7 +302,7 @@ async def ingest_patent_from_external(
 
     if texts_to_embed:
         try:
-            embeddings = await generate_document_embeddings(texts_to_embed)
+            embeddings = await generate_document_embeddings(texts_to_embed, firm_id=firm_id, user_id=user_id, workflow="import")
             for i, (txt, emb) in enumerate(zip(texts_to_embed, embeddings)):
                 meta = chunk_metadata[i] if i < len(chunk_metadata) else {}
                 await db.execute(

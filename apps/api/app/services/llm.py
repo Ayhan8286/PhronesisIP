@@ -9,10 +9,12 @@ Includes:
 """
 
 import json
+import uuid
+import logging
 from typing import AsyncGenerator, Optional, List
 
 from app.config import settings
-from app.services.cache import get_cached_response, set_cached_response
+from app.services.cache import cache_service
 
 
 async def _get_llm(temperature: float = 0.3):
@@ -41,7 +43,7 @@ async def _get_llm(temperature: float = 0.3):
 # Patent Summary (auto-generated after PDF upload)
 # ---------------------------------------------------------------------------
 
-async def generate_patent_summary(full_text: str) -> dict:
+async def generate_patent_summary(full_text: str, firm_id: uuid.UUID, user_id: uuid.UUID) -> dict:
     """
     Generate a structured patent summary from full text.
     Returns a dict with core_invention, claims_breakdown, weaknesses, etc.
@@ -86,13 +88,34 @@ Return your analysis in this EXACT JSON format:
 
 Return ONLY valid JSON, no markdown formatting."""
 
+    # 1. Try cache
+    cached = await cache_service.get_llm_response(prompt)
+    if cached:
+        try:
+            return json.loads(cached)
+        except:
+            pass
+
+    # 2. Call API
     from langchain_core.messages import HumanMessage
-
     result = await llm.ainvoke([HumanMessage(content=prompt)])
+    content = result.content
+    
+    # 3. Log cost & usage
+    from app.services.usage import track_ai_generation_usage
+    await track_ai_generation_usage(
+        result=result,
+        firm_id=firm_id,
+        user_id=user_id,
+        workflow_type="patent_summary"
+    )
 
+    # 4. Cache and return
+    await cache_service.set_llm_response(prompt, content)
+    
     try:
         # Try to parse JSON from response
-        text = result.content.strip()
+        text = content.strip()
         # Remove markdown code fences if present
         if text.startswith("```"):
             text = text.split("\n", 1)[1]
@@ -137,6 +160,8 @@ Guidelines:
 async def generate_patent_draft_stream(
     invention_description: str,
     technical_field: str,
+    firm_id: uuid.UUID,
+    user_id: uuid.UUID,
     prior_art_context: Optional[str] = None,
     claim_style: str = "apparatus",
     spec_context: Optional[str] = None,
@@ -168,9 +193,23 @@ Please draft a complete patent application following the USPTO format above."""
         HumanMessage(content=prompt),
     ]
 
+    # 1. Try cache
+    cached = await cache_service.get_llm_response(prompt)
+    if cached:
+        yield f"data: {cached}\n\n"
+        yield "data: [DONE]\n\n"
+        return
+
+    # 2. Stream and collect
+    full_response = []
     async for chunk in llm.astream(messages):
         if hasattr(chunk, "content") and chunk.content:
+            full_response.append(chunk.content)
             yield f"data: {chunk.content}\n\n"
+
+    # 3. Cache the result
+    if full_response:
+        await cache_service.set_llm_response(prompt, "".join(full_response))
 
     yield "data: [DONE]\n\n"
 
@@ -203,6 +242,8 @@ async def generate_oa_response_stream(
     office_action_text: str,
     patent_title: str,
     patent_claims: List[dict],
+    firm_id: uuid.UUID,
+    user_id: uuid.UUID,
     response_strategy: str = "argue",
     additional_context: Optional[str] = None,
     prior_art_context: Optional[str] = None,
@@ -263,11 +304,12 @@ async def generate_risk_analysis_stream(
     patent_title: str,
     claims: List[dict],
     prior_art: List[dict],
+    firm_id: uuid.UUID,
+    user_id: uuid.UUID,
     analysis_type: str = "invalidity",
     product_description: Optional[str] = None,
     target_claims: Optional[List[int]] = None,
     rag_context: Optional[str] = None,
-    firm_id: Optional[str] = None,
 ) -> AsyncGenerator[str, None]:
     """
     Stream a structured risk/infringement/invalidity analysis.
@@ -368,14 +410,12 @@ Be thorough and precise. Use proper legal terminology. Cite specific claim eleme
 
     system = f"You are an expert patent litigator and invalidity analyst conducting a {analysis_type} analysis. Produce a structured, court-ready report. When retrieved patent context is provided, cite it with page numbers."
 
-    # Check cache first
-    cache_key_query = f"{patent_title}|{analysis_type}|{str(target_claims)}"
-    if firm_id:
-        cached = await get_cached_response(firm_id, cache_key_query, f"risk_{analysis_type}")
-        if cached:
-            yield f"data: {cached}\n\n"
-            yield "data: [DONE]\n\n"
-            return
+    # 1. Try cache
+    cached = await cache_service.get_llm_response(prompt)
+    if cached:
+        yield f"data: {cached}\n\n"
+        yield "data: [DONE]\n\n"
+        return
 
     messages = [
         SystemMessage(content=system),
@@ -389,10 +429,10 @@ Be thorough and precise. Use proper legal terminology. Cite specific claim eleme
             full_response.append(chunk.content)
             yield f"data: {chunk.content}\n\n"
 
-    # Cache the full response
-    if firm_id and full_response:
-        await set_cached_response(firm_id, cache_key_query, f"risk_{analysis_type}", "".join(full_response))
-
+    # 3. Cache the result
+    if full_response:
+        await cache_service.set_llm_response(prompt, "".join(full_response))
+    
     yield "data: [DONE]\n\n"
 
 

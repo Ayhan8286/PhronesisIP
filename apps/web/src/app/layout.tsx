@@ -14,6 +14,8 @@ export const metadata: Metadata = {
     "Accelerate patent prosecution and portfolio management with AI-powered drafting, office action responses, and prior art analysis.",
 };
 
+import { Providers } from "@/components/Providers";
+
 export default function RootLayout({
   children,
 }: Readonly<{
@@ -32,7 +34,9 @@ export default function RootLayout({
       }}
     >
       <html lang="en" className={inter.variable}>
-        <body>{children}</body>
+        <body>
+          <Providers>{children}</Providers>
+        </body>
       </html>
     </ClerkProvider>
   );

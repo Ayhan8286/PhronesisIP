@@ -1,26 +1,14 @@
-"""
-External patent search via USPTO Open Data Portal (ODP) and Google Patents.
-- USPTO ODP: US patents (api.uspto.gov, requires API key for full access)
-- Google Patents: international coverage (US, EU, JP, WO, CN, KR, etc.)
-"""
-
-import httpx
+from typing import Optional, List
 import re
-from typing import Optional
 from urllib.parse import quote_plus
+import httpx
 
+from app.config import settings
+from app.services.epo_ops import epo_client
 
-# ---------------------------------------------------------------------------
-# USPTO Open Data Portal (ODP) — replaced legacy PatentsView
-# ---------------------------------------------------------------------------
-
-USPTO_ODP_BASE = "https://api.uspto.gov/api/v1"
-
-# Headers
-ODP_HEADERS = {
-    "User-Agent": "PatentIQ/1.0 (patent intelligence platform)",
-    "Accept": "application/json",
-}
+# USPTO Open Data Portal configuration
+USPTO_ODP_BASE = "https://api.uspto.gov"
+ODP_HEADERS = {"Accept": "application/json"}
 
 
 async def search_patents_external(
@@ -30,25 +18,52 @@ async def search_patents_external(
     max_results: int = 25,
 ) -> dict:
     """
-    Search for patents using Google Patents (primary).
-    USPTO ODP requires API key — skip unless key is configured.
-    Google Patents XHR returns results in 2-5 seconds with no API key.
+    Search for patents using Google Patents (Global).
     """
-    # Build Google Patents query
+    # 1. Search Google Patents (Broad, Global)
     search_terms = query
     if assignee:
         search_terms += f' assignee:"{assignee}"'
     if patent_number:
         search_terms += f" {patent_number}"
 
-    # Try ODP only if we have a configured API key (future feature)
-    # For now, go straight to Google Patents — always works, no key needed
-    return await search_google_patents(
+    google_results = await search_google_patents(
         search_terms,
         assignee=None,
-        country="US",
+        country=None,  # Search globally
         max_results=max_results,
     )
+
+    # 2. Search EPO (Official European Source)
+    epo_results = {"patents": [], "total": 0}
+    if settings.EPO_CLIENT_ID:
+        try:
+            # Convert simple query to CQL-like for EPO
+            epo_query = query
+            if assignee:
+                # Basic personal name or corp name search in EPO
+                epo_query = f'pa="{assignee}" and ({query})'
+            epo_results = await epo_client.search(epo_query, max_results=max_results)
+        except Exception:
+            pass
+
+    # 3. Merge and Deduplicate
+    all_patents = google_results.get("patents", []) + epo_results.get("patents", [])
+
+    # Deduplicate by patent number
+    seen = set()
+    unique_patents = []
+    for p in all_patents:
+        pnum = p.get("patent_number", "").replace(" ", "").upper()
+        if pnum and pnum not in seen:
+            seen.add(pnum)
+            unique_patents.append(p)
+
+    return {
+        "patents": unique_patents[:max_results],
+        "total": max(google_results.get("total", 0), epo_results.get("total", 0)),
+        "sources": ["google_patents"] + (["epo_ops"] if epo_results.get("patents") else [])
+    }
 
 
 async def _search_odp(

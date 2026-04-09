@@ -12,6 +12,7 @@ export default function OfficeActionsPage() {
   const [actions, setActions] = useState<OfficeAction[]>([]);
   const [loading, setLoading] = useState(true);
   const [expandedOA, setExpandedOA] = useState<string | null>(null);
+  const [viewingPDF, setViewingPDF] = useState<string | null>(null);
 
   // Upload state
   const [uploading, setUploading] = useState(false);
@@ -79,6 +80,18 @@ export default function OfficeActionsPage() {
     } catch (err: any) {
       alert(err.message || "Response generation failed");
       setGeneratingFor(null);
+    }
+  }
+
+  async function handleViewPDF(patentId: string) {
+    setViewingPDF(patentId);
+    try {
+      const { url } = await api.getDocumentViewUrl(patentId);
+      window.open(url, "_blank");
+    } catch (err: any) {
+      alert(err.message || "Could not retrieve PDF link");
+    } finally {
+      setViewingPDF(null);
     }
   }
 
@@ -223,6 +236,21 @@ export default function OfficeActionsPage() {
                             <Sparkles style={{ width: 14, height: 14 }} />
                           )}
                           AI Response
+                        </button>
+                      )}
+                      {oa.patent_id && (
+                        <button
+                          className="btn btn-ghost btn-sm"
+                          onClick={() => handleViewPDF(oa.patent_id)}
+                          disabled={viewingPDF === oa.patent_id}
+                          title="View Source PDF"
+                        >
+                          {viewingPDF === oa.patent_id ? (
+                            <Loader2 style={{ width: 14, height: 14, animation: "spin 1s linear infinite" }} />
+                          ) : (
+                            <FileText style={{ width: 14, height: 14 }} />
+                          )}
+                          Source PDF
                         </button>
                       )}
                       <button className="btn btn-ghost btn-sm" onClick={() => setExpandedOA(isExpanded ? null : oa.id)}>

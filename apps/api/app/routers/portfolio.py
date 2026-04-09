@@ -40,7 +40,10 @@ async def portfolio_overview(
             Patent.status,
             func.count(Patent.id).label("count"),
         )
-        .where(Patent.firm_id == firm_id)
+        .where(
+            Patent.firm_id == firm_id,
+            Patent.deleted_at.is_(None)
+        )
         .group_by(Patent.status)
     )
     statuses = {row.status: row.count for row in status_counts.all()}
@@ -57,8 +60,10 @@ async def portfolio_overview(
         .join(Patent, OfficeAction.patent_id == Patent.id)
         .where(
             Patent.firm_id == firm_id,
+            Patent.deleted_at.is_(None),
             OfficeAction.response_deadline <= deadline_cutoff,
             OfficeAction.status == "pending",
+            OfficeAction.deleted_at.is_(None),
         )
     )
     urgent_deadlines = upcoming_deadlines.scalar() or 0
@@ -92,6 +97,7 @@ async def portfolio_timeline(
     ).where(
         Patent.firm_id == user.firm_id,
         Patent.filing_date.isnot(None),
+        Patent.deleted_at.is_(None),
     )
 
     if year:
@@ -180,7 +186,10 @@ async def delete_family(
 
     # Unlink patents from this family
     patents_result = await db.execute(
-        select(Patent).where(Patent.family_id == family_id)
+        select(Patent).where(
+            Patent.family_id == family_id,
+            Patent.deleted_at.is_(None)
+        )
     )
     for patent in patents_result.scalars().all():
         patent.family_id = None

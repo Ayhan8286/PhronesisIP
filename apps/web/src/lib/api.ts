@@ -322,6 +322,11 @@ export const api = {
       `/api/v1/documents/${patentId}/summary`
     ),
 
+  getDocumentViewUrl: (patentId: string) =>
+    apiFetch<{ url: string; expires_in: number }>(
+      `/api/v1/documents/${patentId}/view-url`
+    ),
+
   // AI Streaming
   generateDraft: (body: object, onChunk: (t: string) => void, onDone?: () => void) =>
     apiStream("/api/v1/drafting/generate", body, onChunk, onDone),

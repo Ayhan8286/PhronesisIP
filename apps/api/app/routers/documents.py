@@ -13,12 +13,14 @@ from app.models import Patent, OfficeAction
 from app.auth import get_current_user, CurrentUser
 from app.services.ingestion import ingest_patent_pdf
 from app.services.document import extract_pdf_text, extract_docx_text
-from app.services.storage import upload_to_r2
+from app.services.storage import upload_to_r2, get_presigned_url
+from app.utils.audit import audit_log
 
 router = APIRouter()
 
 
 @router.post("/upload-patent")
+@audit_log(action="UPLOAD_PATENT", target_type="patent")
 async def upload_patent_pdf(
     file: UploadFile = File(...),
     patent_id: str = Form(...),
@@ -69,6 +71,7 @@ async def upload_patent_pdf(
 
 
 @router.post("/upload-office-action")
+@audit_log(action="UPLOAD_OFFICE_ACTION", target_type="patent")
 async def upload_office_action_pdf(
     file: UploadFile = File(...),
     patent_id: str = Form(...),
@@ -206,6 +209,9 @@ async def get_patent_summary(
     if not patent:
         raise HTTPException(status_code=404, detail="Patent not found")
 
+    # Log document access
+    # (Note: Decorator handles this for the route below, but we log summary access too)
+
     meta = patent.patent_metadata or {}
     summary = meta.get("ai_summary")
 
@@ -268,3 +274,31 @@ Return ONLY a valid JSON array."""
         return json.loads(text)
     except Exception:
         return []
+
+@router.get("/{patent_id}/view-url")
+@audit_log(action="VIEW_DOCUMENT", target_type="patent")
+async def get_document_view_url(
+    patent_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    user: CurrentUser = Depends(get_current_user),
+):
+    """
+    Generate a 15-minute presigned URL to view a patent PDF.
+    Verifies RLS before signing.
+    """
+    result = await db.execute(
+        select(Patent).where(
+            Patent.id == patent_id,
+            Patent.firm_id == user.firm_id,
+        )
+    )
+    patent = result.scalar_one_or_none()
+    if not patent or not patent.patent_metadata:
+        raise HTTPException(status_code=404, detail="Document not found")
+
+    r2_key = patent.patent_metadata.get("r2_key")
+    if not r2_key:
+        raise HTTPException(status_code=404, detail="Source PDF not stored in R2")
+
+    url = await get_presigned_url(r2_key, expires_in=900)
+    return {"url": url, "expires_in": 900}

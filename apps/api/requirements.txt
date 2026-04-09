@@ -38,3 +38,5 @@ inngest==0.4.1
 orjson==3.10.13
 python-dateutil==2.9.0
 tenacity==9.0.0
+sentry-sdk[fastapi]==2.19.2
+redis==5.2.1

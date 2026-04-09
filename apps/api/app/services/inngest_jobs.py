@@ -49,7 +49,8 @@ async def process_large_patent(ctx: inngest.Context, step: inngest.Step) -> dict
         batch_texts = [c["text"] for c in batch_chunks]
 
         async def do_embed():
-            return await generate_document_embeddings(batch_texts)
+            # Using firm_id and assuming a system user_id for background tasks or passing it if available
+            return await generate_document_embeddings(batch_texts, firm_id=firm_id, user_id=uuid.UUID(int=0)) # Placeholder system user
 
         # Inngest steps must be deterministic and retriable
         batch_embeddings = await step.run(f"embed_batch_{i}", do_embed)
@@ -99,7 +100,7 @@ async def process_large_patent(ctx: inngest.Context, step: inngest.Step) -> dict
 
     # 4. Generate AI Summary (Background)
     async def do_summary():
-        return await generate_patent_summary(full_text)
+        return await generate_patent_summary(full_text, firm_id=firm_id, user_id=uuid.UUID(int=0))
 
     summary = await step.run("generate_summary", do_summary)
 
@@ -172,8 +173,7 @@ async def process_oa_references(ctx: inngest.Context, step: inngest.Step) -> dic
                             p_data = search_res["patents"][0]
                             
                             # Embed the abstract mapping via Voyage AI
-                            abstract_text = p_data.get("abstract", "")
-                            embeddings = await generate_document_embeddings([abstract_text]) if abstract_text else [[0.0]*1024]
+                            embeddings = await generate_document_embeddings([abstract_text], firm_id=uuid.UUID(firm_id_str), user_id=uuid.UUID(int=0)) if abstract_text else [[0.0]*1024]
                             
                             # Store in DB as a prior art reference
                             pref = PriorArtReference(

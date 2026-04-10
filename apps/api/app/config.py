@@ -34,8 +34,10 @@ class Settings(BaseSettings):
     # --- Auth (Clerk) ---
     CLERK_SECRET_KEY: str = ""
     CLERK_PUBLISHABLE_KEY: str = ""
-    CLERK_JWKS_URL: str = "https://emerging-sloth-68.clerk.accounts.dev/.well-known/jwks.json"
-    CLERK_ISSUER: str = "https://emerging-sloth-68.clerk.accounts.dev"
+    # IMPORTANT: do not default to a development Clerk instance in production.
+    # Set these via environment variables on your deployment.
+    CLERK_JWKS_URL: str = ""
+    CLERK_ISSUER: str = ""
 
     # --- AI / Embeddings ---
     VOYAGE_API_KEY: str = ""

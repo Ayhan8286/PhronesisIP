@@ -1,6 +1,10 @@
-const API_URL = typeof window !== "undefined" && !process.env.NEXT_PUBLIC_API_URL 
-  ? "" 
-  : (process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000");
+const RAW_API_URL = (process.env.NEXT_PUBLIC_API_URL || "").trim();
+const API_URL =
+  RAW_API_URL.length > 0
+    ? RAW_API_URL.replace(/\/$/, "")
+    : process.env.NODE_ENV === "development"
+      ? "http://localhost:8000"
+      : "";
 
 export async function apiFetch<T>(
   path: string,

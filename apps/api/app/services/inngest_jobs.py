@@ -171,6 +171,7 @@ async def process_oa_references(ctx: inngest.Context, step: inngest.Step) -> dic
                         search_res = await search_google_patents(pat_num, max_results=1)
                         if search_res["patents"]:
                             p_data = search_res["patents"][0]
+                            abstract_text = p_data.get("abstract", "")
                             
                             # Embed the abstract mapping via Voyage AI
                             embeddings = await generate_document_embeddings([abstract_text], firm_id=uuid.UUID(firm_id_str), user_id=uuid.UUID(int=0)) if abstract_text else [[0.0]*1024]

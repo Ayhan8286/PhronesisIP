@@ -1,6 +1,11 @@
-const RAW_API_URL = (process.env.NEXT_PUBLIC_API_URL || "").trim();
+let RAW_API_URL = (process.env.NEXT_PUBLIC_API_URL || "").trim();
+// Protect against CLI variable injection bugs where the literal key name was passed
+if (RAW_API_URL.includes("NEXT_PUBLIC_API_URL=")) {
+  RAW_API_URL = "";
+}
+
 const API_URL =
-  RAW_API_URL.length > 0
+  RAW_API_URL.length > 0 && !RAW_API_URL.includes("=")
     ? RAW_API_URL.replace(/\/$/, "")
     : process.env.NODE_ENV === "development"
       ? "http://localhost:8000"

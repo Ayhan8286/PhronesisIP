@@ -23,7 +23,7 @@ class OfficeAction(Base):
         String(100), nullable=False
     )  # non-final, final, restriction, advisory
     mailing_date: Mapped[Optional[date]] = mapped_column(Date)
-    with_response_deadline: Mapped[Optional[date]] = mapped_column("response_deadline", Date)
+    response_deadline: Mapped[Optional[date]] = mapped_column(Date)
     r2_file_key: Mapped[Optional[str]] = mapped_column(String(500))
     extracted_text: Mapped[Optional[str]] = mapped_column(Text)
     rejections: Mapped[Optional[dict]] = mapped_column(JSONB, default=[])

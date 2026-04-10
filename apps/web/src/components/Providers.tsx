@@ -17,7 +17,25 @@ if (typeof window !== 'undefined') {
   }
 }
 
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { useState } from 'react';
+
 export function Providers({ children }: { children: React.ReactNode }) {
+  // Initialize QueryClient within the component to ensure each user gets their own cache in SSR
+  const [queryClient] = useState(
+    () =>
+      new QueryClient({
+        defaultOptions: {
+          queries: {
+            staleTime: 60 * 1000, // 1 minute
+            retry: 2, // Automatically retry failing queries up to 2 times
+            retryDelay: (attemptIndex) => Math.min(1000 * 2 ** attemptIndex, 30000), // Exponential backoff
+            refetchOnWindowFocus: false, // Prevents excessive refetching on tab switch
+          },
+        },
+      })
+  );
+
   useEffect(() => {
     // Manually capture pageview on mount and navigation
     if (typeof window !== 'undefined') {
@@ -26,8 +44,10 @@ export function Providers({ children }: { children: React.ReactNode }) {
   }, []);
 
   return (
-    <PostHogProvider client={posthog}>
-      {children}
-    </PostHogProvider>
+    <QueryClientProvider client={queryClient}>
+      <PostHogProvider client={posthog}>
+        {children}
+      </PostHogProvider>
+    </QueryClientProvider>
   );
 }

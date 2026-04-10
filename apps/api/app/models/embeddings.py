@@ -24,8 +24,8 @@ class PatentEmbedding(Base):
     chunk_text: Mapped[str] = mapped_column(Text, nullable=False)
     page_number: Mapped[Optional[int]] = mapped_column(Integer)
     section_type: Mapped[Optional[str]] = mapped_column(String(50), default="description")
-    firm_id: Mapped[Optional[uuid.UUID]] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("firms.id"), nullable=True, index=True
+    firm_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("firms.id", ondelete="CASCADE"), nullable=False, index=True
     )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()

@@ -13,15 +13,11 @@
   "rewrites": [
     {
       "source": "/api/v1/:path*",
-      "destination": "apps/api/index.py"
+      "destination": "/apps/api/index.py"
     },
     {
       "source": "/api/inngest",
-      "destination": "apps/api/index.py"
-    },
-    {
-      "source": "/(.*)",
-      "destination": "apps/web/$1"
+      "destination": "/apps/api/index.py"
     }
   ]
 }

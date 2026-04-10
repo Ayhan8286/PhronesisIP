@@ -5,7 +5,7 @@ from dotenv import load_dotenv
 
 # Path to the API's .env file
 API_ENV_PATH = r"d:\box mation\apps\api\.env"
-MIGRATION_SQL_PATH = r"d:\box mation\database\migrations\002_fix_schema_sync.sql"
+MIGRATION_SQL_PATH = r"d:\box mation\database\migrations\003_safe_rls.sql"
 
 def apply_fix():
     print(f"Loading environment from {API_ENV_PATH}...")

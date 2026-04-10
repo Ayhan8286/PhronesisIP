@@ -1,6 +1,10 @@
 let RAW_API_URL = (process.env.NEXT_PUBLIC_API_URL || "").trim();
-// Protect against CLI variable injection bugs where the literal key name was passed
-if (RAW_API_URL.includes("NEXT_PUBLIC_API_URL=")) {
+// Protect against CLI / env UI injection bugs where the literal key name was passed
+// Examples we've seen:
+// - "NEXT_PUBLIC_API_URL=http://example.com"
+// - "/NEXT_PUBLIC_API_URL="
+// - "NEXT_PUBLIC_API_URL"
+if (RAW_API_URL.includes("NEXT_PUBLIC_API_URL")) {
   RAW_API_URL = "";
 }
 

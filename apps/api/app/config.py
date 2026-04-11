@@ -59,7 +59,7 @@ class Settings(BaseSettings):
     R2_PUBLIC_URL: str = ""  # Custom domain or R2.dev URL
 
     # --- CORS ---
-    CORS_ORIGINS: List[str] = []
+    CORS_ORIGINS: Any = []
 
     @field_validator("CORS_ORIGINS", mode="before")
     @classmethod

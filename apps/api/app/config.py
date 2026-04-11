@@ -2,7 +2,7 @@
 Application configuration loaded from environment variables.
 """
 
-from pydantic import field_validator
+from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings
 from typing import List, Any, Optional
 import json
@@ -73,6 +73,26 @@ class Settings(BaseSettings):
             # Fallback to comma-separated
             return [i.strip() for i in v.split(",") if i.strip()]
         return v
+
+    @model_validator(mode="after")
+    def validate_production_env(self):
+        if self.APP_ENV == "production":
+            missing = [
+                name
+                for name in [
+                    "DATABASE_URL",
+                    "CLERK_SECRET_KEY",
+                    "CLERK_JWKS_URL",
+                    "CLERK_ISSUER",
+                ]
+                if not getattr(self, name)
+            ]
+            if missing:
+                raise ValueError(
+                    "Missing required production environment variables: "
+                    + ", ".join(missing)
+                )
+        return self
 
     # --- Background Jobs ---
     WORKER_CONCURRENCY: int = 4

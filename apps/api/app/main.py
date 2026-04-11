@@ -39,6 +39,11 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+if engine is None:
+    raise RuntimeError(
+        "Database engine failed to initialize. Check DATABASE_URL and database connectivity."
+    )
+
 # CORS — allow Next.js frontend
 if settings.APP_ENV == "development":
     app.add_middleware(

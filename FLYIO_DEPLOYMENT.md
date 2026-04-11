@@ -42,7 +42,7 @@ fly secrets set \
 ```
 
 5. Configure the frontend Vercel project to use the Fly backend URL:
-- `NEXT_PUBLIC_API_URL=https://<your-fly-app>.fly.dev`
+- `NEXT_PUBLIC_API_URL=https://phronesisip.fly.dev`
 
 ## Notes
 - Frontend remains on Vercel and uses `NEXT_PUBLIC_API_URL` to call the Fly.io backend.

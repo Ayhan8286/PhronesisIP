@@ -1,0 +1,15 @@
+app = "patentiq-api"
+primary_region = "ord"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  APP_ENV = "production"
+  DEBUG = "false"
+  # DATABASE_URL = "postgresql+asyncpg://DB_USER:DB_PASS@HOST:PORT/DB_NAME"
+  # CLERK_SECRET_KEY = ""
+  # CLERK_JWKS_URL = ""
+  # CLERK_ISSUER = ""
+  # REDIS_URL = ""
+  # SENTRY_DSN = ""

@@ -9,13 +9,20 @@ from sqlalchemy import event, text
 from app.config import settings
 
 
-engine = create_async_engine(
-    settings.DATABASE_URL,
-    pool_size=settings.DATABASE_POOL_SIZE,
-    max_overflow=settings.DATABASE_MAX_OVERFLOW,
-    echo=settings.DEBUG,
-    pool_pre_ping=True,
-)
+try:
+    engine = create_async_engine(
+        settings.DATABASE_URL,
+        pool_size=settings.DATABASE_POOL_SIZE,
+        max_overflow=settings.DATABASE_MAX_OVERFLOW,
+        echo=settings.DEBUG,
+        pool_pre_ping=True,
+    )
+except Exception as e:
+    # Allow the app to start even if the engine fails to initialize 
+    # so we can report the error through the diagnostic endpoint.
+    print(f"DATABASE ENGINE INITIALIZATION FAILED: {str(e)}")
+    engine = None
+    _engine_init_error = e
 
 async_session_factory = async_sessionmaker(
     engine,

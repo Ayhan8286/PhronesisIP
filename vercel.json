@@ -7,7 +7,8 @@
     },
     {
       "src": "apps/api/index.py",
-      "use": "@vercel/python"
+      "use": "@vercel/python",
+      "config": { "runtime": "python3.12" }
     }
   ],
   "rewrites": [

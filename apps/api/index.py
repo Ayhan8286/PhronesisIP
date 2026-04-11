@@ -16,12 +16,16 @@ if api_root not in sys.path:
 # Vercel's Python builder COMPULSIVELY needs 'app' to be defined at the top level
 # without being hidden inside try/except blocks in some environments.
 app = None
+startup_error = None
+startup_traceback = None
 
 try:
     # Now that apps/api is in the path, 'app.main' should be findable
     from app.main import app as main_app
     app = main_app
 except Exception as e:
+    startup_error = str(e)
+    startup_traceback = traceback.format_exc()
     # Fallback to a diagnostic app if the real one fails to load
     from fastapi import FastAPI
     from fastapi.responses import JSONResponse
@@ -34,8 +38,8 @@ except Exception as e:
             status_code=500,
             content={
                 "error": "FastAPI Startup Failure",
-                "detail": str(e),
-                "traceback": traceback.format_exc(),
+                "detail": startup_error,
+                "traceback": startup_traceback,
                 "sys_path": sys.path,
                 "cwd": os.getcwd(),
                 "api_root": api_root

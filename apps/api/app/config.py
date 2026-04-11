@@ -96,6 +96,8 @@ class Settings(BaseSettings):
 
     # --- Background Jobs ---
     WORKER_CONCURRENCY: int = 4
+    INNGEST_SIGNING_KEY: Optional[str] = None
+    INNGEST_EVENT_KEY: Optional[str] = None
 
     # --- Redis Cache (Upstash / local) ---
     REDIS_URL: str = ""  # e.g. rediss://default:xxx@xxx.upstash.io:6379

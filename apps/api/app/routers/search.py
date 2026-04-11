@@ -138,7 +138,7 @@ async def search_patents(
 # ---------------------------------------------------------------------------
 
 class ExternalSearchRequest(BaseModel):
-    query: str = ""
+    query: Optional[str] = None
     patent_number: Optional[str] = None
     assignee: Optional[str] = None
     max_results: int = 25
@@ -153,12 +153,13 @@ async def search_external_patents(
     Search USPTO PatentsView API for patents.
     Returns real patent data from the US patent office.
     """
-    if not data.query and not data.patent_number and not data.assignee:
+    effective_query = data.query or ""
+    if not effective_query and not data.patent_number and not data.assignee:
         raise HTTPException(status_code=400, detail="Provide a query, patent number, or assignee")
 
     try:
         results = await search_patents_external(
-            query=data.query,
+            query=effective_query,
             assignee=data.assignee,
             patent_number=data.patent_number,
             max_results=data.max_results,

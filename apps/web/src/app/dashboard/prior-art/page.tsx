@@ -3,6 +3,7 @@
 import { useState } from "react";
 import Header from "@/components/Header";
 import { api, SearchResult, ExternalPatent } from "@/lib/api";
+import { getErrorMessage } from "@/lib/utils";
 import {
   Search, Loader2, Globe, Database,
   Download, CheckCircle2, BookOpen, MapPin
@@ -44,9 +45,9 @@ export default function PriorArtPage() {
         setLocalResults(res.results);
         setExternalResults([]);
       }
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error("Search failed:", err);
-      alert(err.message || "Search failed");
+      alert(getErrorMessage(err));
     } finally {
       setSearching(false);
     }
@@ -57,8 +58,8 @@ export default function PriorArtPage() {
     try {
       await api.importPatent(patentNum);
       setImportedPatents((prev) => new Set(prev).add(patentNum));
-    } catch (err: any) {
-      alert(err.message || "Import failed");
+    } catch (err: unknown) {
+      alert(getErrorMessage(err));
     } finally {
       setImporting(null);
     }
@@ -83,7 +84,7 @@ export default function PriorArtPage() {
             className={`btn ${searchMode === "google" ? "btn-primary" : "btn-secondary"}`}
             onClick={() => setSearchMode("google")}
           >
-            <MapPin style={{ width: 16, height: 16 }} /> Google Patents (Int'l)
+            <MapPin style={{ width: 16, height: 16 }} /> Google Patents (Intl)
           </button>
           <button
             className={`btn ${searchMode === "local" ? "btn-primary" : "btn-secondary"}`}

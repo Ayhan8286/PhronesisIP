@@ -7,6 +7,9 @@ from sqlalchemy.orm import DeclarativeBase
 from sqlalchemy import event, text
 
 from app.config import settings
+from app.utils.logging import get_base_logger
+
+logger = get_base_logger(__name__)
 
 
 try:
@@ -17,17 +20,20 @@ try:
         echo=settings.DEBUG,
         pool_pre_ping=True,
     )
+    _engine_init_error = None
 except Exception as e:
-    # Allow the app to start even if the engine fails to initialize 
-    # so we can report the error through the diagnostic endpoint.
-    print(f"DATABASE ENGINE INITIALIZATION FAILED: {str(e)}")
+    logger.error("DATABASE ENGINE INITIALIZATION FAILED", exc_info=True)
     engine = None
     _engine_init_error = e
 
-async_session_factory = async_sessionmaker(
-    engine,
-    class_=AsyncSession,
-    expire_on_commit=False,
+async_session_factory = (
+    async_sessionmaker(
+        engine,
+        class_=AsyncSession,
+        expire_on_commit=False,
+    )
+    if engine is not None
+    else None
 )
 
 SessionLocal = async_session_factory
@@ -38,6 +44,9 @@ from app.models.base import Base
 
 async def get_db():
     """FastAPI dependency: yields an async database session."""
+    if async_session_factory is None:
+        raise RuntimeError("Database engine is not initialized")
+
     async with async_session_factory() as session:
         try:
             yield session

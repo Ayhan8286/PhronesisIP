@@ -4,15 +4,15 @@ import { useEffect, useState } from "react";
 import Header from "@/components/Header";
 import { api, PatentFamily, Patent, OfficeAction } from "@/lib/api";
 import {
-  FolderTree, Plus, Download, ChevronRight, FileText, Calendar,
-  Loader2, ShieldCheck, AlertTriangle, Clock, BarChart3, TrendingUp,
+  FolderTree, Plus, Download, ChevronRight, FileText,
+  Loader2, ShieldCheck, AlertTriangle, Clock, TrendingUp,
   ChevronDown
 } from "lucide-react";
 
 export default function PortfolioPage() {
   const [families, setFamilies] = useState<PatentFamily[]>([]);
   const [patents, setPatents] = useState<Patent[]>([]);
-  const [officeActions, setOfficeActions] = useState<OfficeAction[]>([]);
+  const [upcomingDeadlinesState, setUpcomingDeadlinesState] = useState<Array<OfficeAction & { daysRemaining: number }>>([]);
   const [loading, setLoading] = useState(true);
   const [expandedFamily, setExpandedFamily] = useState<string | null>(null);
 
@@ -25,7 +25,19 @@ export default function PortfolioPage() {
       .then(([f, p, oa]) => {
         setFamilies(f);
         setPatents(p.patents);
-        setOfficeActions(oa);
+        const now = Date.now();
+        setUpcomingDeadlinesState(
+          oa
+            .filter((item) => item.response_deadline && item.status === "pending")
+            .map((item) => ({
+              ...item,
+              daysRemaining: Math.ceil(
+                (new Date(item.response_deadline!).getTime() - now) / (1000 * 60 * 60 * 24)
+              ),
+            }))
+            .filter((item) => item.daysRemaining > 0)
+            .sort((a, b) => a.daysRemaining - b.daysRemaining)
+        );
       })
       .catch(console.error)
       .finally(() => setLoading(false));
@@ -34,19 +46,9 @@ export default function PortfolioPage() {
   const totalPatents = patents.length;
   const grantedCount = patents.filter((p) => p.status === "granted").length;
   const pendingCount = patents.filter((p) => p.status === "pending").length;
-  const abandonedCount = patents.filter((p) => p.status === "abandoned").length;
 
   // Calculate upcoming deadlines
-  const upcomingDeadlines = officeActions
-    .filter((oa) => oa.response_deadline && oa.status === "pending")
-    .map((oa) => {
-      const days = Math.ceil(
-        (new Date(oa.response_deadline!).getTime() - Date.now()) / (1000 * 60 * 60 * 24)
-      );
-      return { ...oa, daysRemaining: days };
-    })
-    .filter((oa) => oa.daysRemaining > 0)
-    .sort((a, b) => a.daysRemaining - b.daysRemaining);
+  const upcomingDeadlines = upcomingDeadlinesState;
 
   // Unfiled patents (not in any family)
   const familiedPatentIds = new Set(

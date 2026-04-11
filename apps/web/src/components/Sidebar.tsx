@@ -5,7 +5,6 @@ import { usePathname } from "next/navigation";
 import { useUser, useClerk } from "@clerk/nextjs";
 import {
   LayoutDashboard,
-  FileText,
   Search,
   Mail,
   ShieldAlert,

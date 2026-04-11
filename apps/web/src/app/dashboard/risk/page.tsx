@@ -2,7 +2,8 @@
 
 import { useEffect, useState, useRef } from "react";
 import Header from "@/components/Header";
-import { api, Patent } from "@/lib/api";
+import { api, Patent, PatentUploadResponse } from "@/lib/api";
+import { getErrorMessage } from "@/lib/utils";
 import {
   ShieldAlert, Sparkles, Loader2, FileText, Upload, AlertTriangle
 } from "lucide-react";
@@ -16,7 +17,7 @@ export default function RiskPage() {
   const [analyzing, setAnalyzing] = useState(false);
   const [analysisText, setAnalysisText] = useState("");
   const [uploadingPDF, setUploadingPDF] = useState(false);
-  const [uploadResult, setUploadResult] = useState<any>(null);
+  const [uploadResult, setUploadResult] = useState<PatentUploadResponse | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const outputRef = useRef<HTMLDivElement>(null);
 
@@ -34,8 +35,8 @@ export default function RiskPage() {
     try {
       const result = await api.uploadPatentPDF(selectedPatentId, file);
       setUploadResult(result);
-    } catch (err: any) {
-      alert(err.message || "Upload failed");
+    } catch (err: unknown) {
+      alert(getErrorMessage(err));
     } finally {
       setUploadingPDF(false);
     }
@@ -44,12 +45,29 @@ export default function RiskPage() {
   const [demographics, setDemographics] = useState("");
   const [targetClaims, setTargetClaims] = useState("");
 
+  if (loading) {
+    return (
+      <>
+        <Header
+          title="Risk & Invalidity Analysis"
+          subtitle="AI-powered claim charts and element-by-element mapping"
+        />
+        <div className="page-content">
+          <div className="card" style={{ padding: 48, textAlign: "center" }}>
+            <Loader2 style={{ width: 32, height: 32, animation: "spin 1s linear infinite" }} />
+            <p style={{ marginTop: 16, color: "var(--text-secondary)" }}>Loading patents…</p>
+          </div>
+        </div>
+      </>
+    );
+  }
+
   async function handleAnalyze() {
     if (!selectedPatentId) return;
     setAnalyzing(true);
     setAnalysisText("");
 
-    const body: any = {
+    const body: Record<string, unknown> = {
       patent_id: selectedPatentId,
       analysis_type: analysisType,
     };
@@ -72,13 +90,11 @@ export default function RiskPage() {
         },
         () => setAnalyzing(false),
       );
-    } catch (err: any) {
-      alert(err.message || "Analysis failed");
+    } catch (err: unknown) {
+      alert(getErrorMessage(err));
       setAnalyzing(false);
     }
   }
-
-  const selectedPatent = patents.find((p) => p.id === selectedPatentId);
 
   return (
     <>
@@ -224,12 +240,12 @@ export default function RiskPage() {
             <div style={{ fontSize: 14, color: "var(--text-secondary)", lineHeight: 1.7 }}>
               <strong>Core Invention:</strong> {uploadResult.summary.core_invention}
             </div>
-            {uploadResult.summary.weaknesses?.length > 0 && (
+            {Array.isArray(uploadResult.summary.weaknesses) && uploadResult.summary.weaknesses.length > 0 && (
               <div style={{ marginTop: 12 }}>
                 <div style={{ fontSize: 13, fontWeight: 600, color: "var(--warning)", marginBottom: 4 }}>
                   <AlertTriangle style={{ width: 14, height: 14, display: "inline" }} /> Weaknesses Found
                 </div>
-                {uploadResult.summary.weaknesses.map((w: any, i: number) => (
+                {uploadResult.summary.weaknesses.map((w, i: number) => (
                   <div key={i} style={{ fontSize: 13, color: "var(--text-secondary)", marginBottom: 4, paddingLeft: 16 }}>
                     • Claim {w.claim_number}: {w.issue} ({w.severity} severity)
                   </div>

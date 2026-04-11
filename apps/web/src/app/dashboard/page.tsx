@@ -6,7 +6,6 @@ import { api, Patent, PortfolioOverview, OfficeAction } from "@/lib/api";
 import {
   FileText,
   CheckCircle2,
-  Clock,
   AlertTriangle,
   ArrowUpRight,
   ArrowDownRight,

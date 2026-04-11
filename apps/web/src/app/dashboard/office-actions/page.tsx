@@ -1,8 +1,9 @@
 "use client";
 
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useMemo, useState, useRef } from "react";
 import Header from "@/components/Header";
-import { api, OfficeAction } from "@/lib/api";
+import { api, OfficeAction, Patent } from "@/lib/api";
+import { getErrorMessage } from "@/lib/utils";
 import {
   Mail, Upload, Sparkles, Loader2, Clock, AlertTriangle,
   CheckCircle2, FileText, ChevronDown, ChevronUp
@@ -16,7 +17,7 @@ export default function OfficeActionsPage() {
 
   // Upload state
   const [uploading, setUploading] = useState(false);
-  const [patents, setPatents] = useState<any[]>([]);
+  const [patents, setPatents] = useState<Patent[]>([]);
   const [uploadPatentId, setUploadPatentId] = useState("");
   const [uploadActionType, setUploadActionType] = useState("Non-Final Rejection");
   const [showUpload, setShowUpload] = useState(false);
@@ -25,7 +26,8 @@ export default function OfficeActionsPage() {
   // AI Response state
   const [generatingFor, setGeneratingFor] = useState<string | null>(null);
   const [responseText, setResponseText] = useState("");
-  const responseRef = useRef<HTMLDivElement>(null);
+  const now = useMemo(() => Date.now(), []);
+  const responseRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
     loadData();
@@ -55,8 +57,8 @@ export default function OfficeActionsPage() {
       alert(`Office Action uploaded! ${result.rejections_found} rejections detected.`);
       setShowUpload(false);
       await loadData(); // Refresh list
-    } catch (err: any) {
-      alert(err.message || "Upload failed");
+    } catch (err: unknown) {
+      alert(getErrorMessage(err));
     } finally {
       setUploading(false);
     }
@@ -77,8 +79,8 @@ export default function OfficeActionsPage() {
         },
         () => setGeneratingFor(null),
       );
-    } catch (err: any) {
-      alert(err.message || "Response generation failed");
+    } catch (err: unknown) {
+      alert(getErrorMessage(err));
       setGeneratingFor(null);
     }
   }
@@ -88,8 +90,8 @@ export default function OfficeActionsPage() {
     try {
       const { url } = await api.getDocumentViewUrl(patentId);
       window.open(url, "_blank");
-    } catch (err: any) {
-      alert(err.message || "Could not retrieve PDF link");
+    } catch (err: unknown) {
+      alert(getErrorMessage(err));
     } finally {
       setViewingPDF(null);
     }
@@ -99,7 +101,7 @@ export default function OfficeActionsPage() {
 
   function daysRemaining(deadline: string | null): number | null {
     if (!deadline) return null;
-    const diff = new Date(deadline).getTime() - Date.now();
+    const diff = new Date(deadline).getTime() - now;
     return Math.ceil(diff / (1000 * 60 * 60 * 24));
   }
 
@@ -212,7 +214,7 @@ export default function OfficeActionsPage() {
                         </div>
                         {oa.rejections && oa.rejections.length > 0 && (
                           <div style={{ fontSize: 13, color: "var(--text-secondary)", marginTop: 4 }}>
-                            {oa.rejections.map((r: any, i: number) => (
+                            {oa.rejections.map((r, i: number) => (
                               <span key={i}>
                                 §{r.type} — {r.references?.join(", ") || r.basis || ""}
                                 {i < oa.rejections.length - 1 ? " | " : ""}
@@ -306,7 +308,7 @@ export default function OfficeActionsPage() {
                         )}
                       </div>
                       <textarea
-                        ref={responseRef as any}
+                        ref={responseRef}
                         style={{
                           width: "100%", minHeight: 400, padding: 16, fontSize: 13, lineHeight: 1.7,
                           color: "var(--text-primary)", background: "var(--bg-tertiary)", 

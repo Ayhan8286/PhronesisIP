@@ -3,6 +3,7 @@
 import { useEffect, useState, useRef } from "react";
 import Header from "@/components/Header";
 import { api, Patent } from "@/lib/api";
+import { getErrorMessage } from "@/lib/utils";
 import {
   Scale, Sparkles, Loader2, FileText, BarChart3, TrendingUp, CheckSquare, Square
 } from "lucide-react";
@@ -60,14 +61,31 @@ export default function DueDiligencePage() {
         },
         () => setAnalyzing(false),
       );
-    } catch (err: any) {
-      alert(err.message || "Report generation failed");
+    } catch (err: unknown) {
+      alert(getErrorMessage(err));
       setAnalyzing(false);
     }
   }
 
   const [uploadingZip, setUploadingZip] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  if (loading) {
+    return (
+      <>
+        <Header
+          title="Licensing Due Diligence"
+          subtitle="AI-generated portfolio assessment and risk scoring"
+        />
+        <div className="page-content">
+          <div className="card" style={{ padding: 48, textAlign: "center" }}>
+            <Loader2 style={{ width: 32, height: 32, animation: "spin 1s linear infinite" }} />
+            <p style={{ marginTop: 16, color: "var(--text-secondary)" }}>Loading portfolio...</p>
+          </div>
+        </div>
+      </>
+    );
+  }
 
   async function handleZipUpload(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
@@ -80,8 +98,8 @@ export default function DueDiligencePage() {
       // Refresh patents
       const pats = await api.listPatents(1);
       setPatents(pats.patents);
-    } catch (err: any) {
-      alert(err.message || "Upload failed");
+    } catch (err: unknown) {
+      alert(getErrorMessage(err));
     } finally {
       setUploadingZip(false);
       if (fileInputRef.current) fileInputRef.current.value = "";

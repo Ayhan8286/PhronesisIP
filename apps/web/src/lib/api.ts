@@ -1,19 +1,4 @@
-let RAW_API_URL = (process.env.NEXT_PUBLIC_API_URL || "").trim();
-// Protect against CLI / env UI injection bugs where the literal key name was passed
-// Examples we've seen:
-// - "NEXT_PUBLIC_API_URL=http://example.com"
-// - "/NEXT_PUBLIC_API_URL="
-// - "NEXT_PUBLIC_API_URL"
-if (RAW_API_URL.includes("NEXT_PUBLIC_API_URL")) {
-  RAW_API_URL = "";
-}
-
-const API_URL =
-  RAW_API_URL.length > 0 && !RAW_API_URL.includes("=")
-    ? RAW_API_URL.replace(/\/$/, "")
-    : process.env.NODE_ENV === "development"
-      ? "http://localhost:8000"
-      : "";
+const API_URL = process.env.NEXT_PUBLIC_API_URL?.trim().replace(/\/$/, "") || "";
 
 export async function apiFetch<T>(
   path: string,
@@ -226,6 +211,27 @@ export interface PatentSummary {
   strongest_claim?: { claim_number: number; reason: string };
   prior_art_vulnerability?: string;
   overall_quality_score?: number;
+  parse_error?: boolean;
+}
+
+export interface ZipUploadResponse {
+  message: string;
+  patents: Patent[];
+}
+
+export interface OfficeActionUploadResponse {
+  message: string;
+  office_action_id: string;
+  rejections_found: number;
+  rejections: OfficeAction['rejections'];
+}
+
+export interface PatentUploadResponse {
+  message: string;
+  text_length: number;
+  chunks: number;
+  embeddings_stored?: number;
+  summary: PatentSummary;
 }
 
 // API Functions
@@ -294,7 +300,7 @@ export const api = {
   uploadZip: (file: File) => {
     const formData = new FormData();
     formData.append("file", file);
-    return apiUpload<{ message: string; patents: any[] }>(
+    return apiUpload<ZipUploadResponse>(
       "/api/v1/documents/upload-zip",
       formData
     );
@@ -304,7 +310,7 @@ export const api = {
     const formData = new FormData();
     formData.append("file", file);
     formData.append("patent_id", patentId);
-    return apiUpload<{ message: string; text_length: number; chunks: number; summary: PatentSummary }>(
+    return apiUpload<PatentUploadResponse>(
       "/api/v1/documents/upload-patent",
       formData
     );
@@ -315,7 +321,7 @@ export const api = {
     formData.append("file", file);
     formData.append("patent_id", patentId);
     formData.append("action_type", actionType);
-    return apiUpload<{ message: string; office_action_id: string; rejections_found: number; rejections: any[] }>(
+    return apiUpload<OfficeActionUploadResponse>(
       "/api/v1/documents/upload-office-action",
       formData
     );

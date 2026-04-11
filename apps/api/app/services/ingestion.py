@@ -26,6 +26,13 @@ from app.services.embeddings import (
 )
 from app.services.llm import generate_patent_summary
 from app.models import Patent, PatentClaim, PatentEmbedding
+from app.utils.logging import get_base_logger
+
+logger = get_base_logger(__name__)
+
+from app.utils.logging import get_base_logger
+
+logger = get_base_logger(__name__)
 
 
 # ── Types ───────────────────────────────────────────────────────────────────
@@ -326,7 +333,7 @@ async def ingest_patent_from_external(
                     },
                 )
         except Exception as e:
-            print(f"Warning: embedding generation failed: {e}")
+            logger.warning("Embedding generation failed", exc_info=True)
 
     await db.flush()
     return patent

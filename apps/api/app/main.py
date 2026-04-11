@@ -107,7 +107,9 @@ app.include_router(
 app.include_router(prior_art.router, prefix="/api/v1/prior-art", tags=["Prior Art & Analysis"])
 app.include_router(search.router, prefix="/api/v1/search", tags=["Search"])
 app.include_router(documents.router, prefix="/api/v1/documents", tags=["Documents"])
-app.include_router(diagnostic.router, prefix="/api/v1/diagnostic", tags=["Diagnostic"])
+
+if settings.APP_ENV == "development":
+    app.include_router(diagnostic.router, prefix="/api/v1/diagnostic", tags=["Diagnostic"])
 
 # Register Inngest endpoint
 import inngest.fast_api

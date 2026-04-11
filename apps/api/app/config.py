@@ -12,8 +12,8 @@ class Settings(BaseSettings):
     """Application settings with sensible defaults for development."""
 
     # --- Application ---
-    APP_ENV: str = "development"
-    DEBUG: bool = True
+    APP_ENV: str = "production"
+    DEBUG: bool = False
 
     # --- Database (Neon PostgreSQL) ---
     DATABASE_URL: str = "postgresql+asyncpg://user:password@localhost:5432/patentiq"
@@ -59,7 +59,7 @@ class Settings(BaseSettings):
     R2_PUBLIC_URL: str = ""  # Custom domain or R2.dev URL
 
     # --- CORS ---
-    CORS_ORIGINS: List[str] = ["http://localhost:3000", "http://localhost:3001", "*"]
+    CORS_ORIGINS: List[str] = []
 
     @field_validator("CORS_ORIGINS", mode="before")
     @classmethod

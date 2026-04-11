@@ -3,6 +3,7 @@
 import { useEffect, useState, useRef } from "react";
 import Header from "@/components/Header";
 import { api, Draft } from "@/lib/api";
+import { getErrorMessage } from "@/lib/utils";
 import {
   Sparkles, Loader2, FileText, Upload, Save, PenTool, Plus
 } from "lucide-react";
@@ -20,7 +21,7 @@ export default function DraftingPage() {
   const [specUploaded, setSpecUploaded] = useState(false);
 
   const fileRef = useRef<HTMLInputElement>(null);
-  const outputRef = useRef<HTMLDivElement>(null);
+  const outputRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
     api.listDrafts().then(setDrafts).catch(console.error);
@@ -34,8 +35,8 @@ export default function DraftingPage() {
       const result = await api.uploadSpec(file);
       setSpecContext(result.extracted_text);
       setSpecUploaded(true);
-    } catch (err: any) {
-      alert(err.message || "Upload failed");
+    } catch (err: unknown) {
+      alert(getErrorMessage(err));
     } finally {
       setUploadingSpec(false);
     }
@@ -64,8 +65,8 @@ export default function DraftingPage() {
           api.listDrafts().then(setDrafts).catch(console.error);
         },
       );
-    } catch (err: any) {
-      alert(err.message || "Generation failed");
+    } catch (err: unknown) {
+      alert(getErrorMessage(err));
       setGenerating(false);
     }
   }
@@ -179,7 +180,7 @@ export default function DraftingPage() {
               )}
             </div>
             <textarea
-              ref={outputRef as any}
+              ref={outputRef}
               style={{
                 width: "100%", minHeight: 600, padding: 16, fontSize: 13, lineHeight: 1.7,
                 color: "var(--text-primary)", background: "var(--bg-primary)",

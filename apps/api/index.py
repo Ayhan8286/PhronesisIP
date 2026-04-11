@@ -6,17 +6,23 @@ import sys
 import os
 import traceback
 
-# Vercel executes from the project root. 
+# Vercel executes from the project root.
 # We add apps/api to the path so internal imports like 'from app.main' work.
 project_root = os.getcwd()
 api_root = os.path.join(project_root, "apps", "api")
-sys.path.append(api_root)
+if api_root not in sys.path:
+    sys.path.append(api_root)
+
+# Vercel's Python builder COMPULSIVELY needs 'app' to be defined at the top level
+# without being hidden inside try/except blocks in some environments.
+app = None
 
 try:
     # Now that apps/api is in the path, 'app.main' should be findable
-    from app.main import app
+    from app.main import app as main_app
+    app = main_app
 except Exception as e:
-    # Catch any remaining startup errors
+    # Fallback to a diagnostic app if the real one fails to load
     from fastapi import FastAPI
     from fastapi.responses import JSONResponse
     
@@ -36,5 +42,7 @@ except Exception as e:
             }
         )
 
-# Vercel's Python runtime expects a module-level variable that is the application
-# We already have it as 'app' in app.main
+# Ensure app is never None for the builder
+if app is None:
+    from fastapi import FastAPI
+    app = FastAPI()

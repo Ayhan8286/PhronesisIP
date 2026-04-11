@@ -6,7 +6,18 @@ const isPublicRoute = createRouteMatcher([
   "/",
 ]);
 
+// Routes that should bypass Clerk middleware entirely (handled by FastAPI backend)
+const isBackendRoute = createRouteMatcher([
+  "/api/v1(.*)",
+  "/api/inngest(.*)",
+]);
+
 export default clerkMiddleware(async (auth, request) => {
+  // Skip Clerk auth for backend API routes — they have their own JWT verification
+  if (isBackendRoute(request)) {
+    return;
+  }
+
   if (!isPublicRoute(request)) {
     await auth.protect();
   }

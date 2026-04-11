@@ -62,12 +62,18 @@ if settings.APP_ENV == "development":
     app.dependency_overrides[get_current_user] = get_dev_user
 
 
+from fastapi import FastAPI, HTTPException
 from fastapi.responses import JSONResponse
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 # --- Exception Handling for Debugging ---
 
 @app.exception_handler(Exception)
 async def global_exception_handler(request, exc):
+    # Do not catch Starlette/FastAPI HTTPExceptions (let them pass through)
+    if isinstance(exc, (HTTPException, StarletteHTTPException)):
+        raise exc
+
     import traceback
     error_msg = str(exc)
     error_type = type(exc).__name__
@@ -86,9 +92,9 @@ async def global_exception_handler(request, exc):
         },
     )
 
-@app.get("/health")
+@app.get("/api/v1/health")
 async def health_check():
-    return {"status": "healthy", "service": "patentiq-api", "version": "1.0.0", "env": settings.APP_ENV}
+    return {"status": "healthy", "service": "patentiq-api", "version": "1.0.1", "env": settings.APP_ENV}
 
 
 # Register routers

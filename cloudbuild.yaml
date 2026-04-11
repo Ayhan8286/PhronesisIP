@@ -1,0 +1,18 @@
+steps:
+  - name: 'gcr.io/cloud-builders/docker'
+    args: [
+      'build',
+      '-t', 'gcr.io/$PROJECT_ID/patentiq-api:$SHORT_SHA',
+      '-f', 'apps/api/Dockerfile',
+      '.'
+    ]
+  - name: 'gcr.io/cloud-builders/docker'
+    args: [
+      'build',
+      '-t', 'gcr.io/$PROJECT_ID/patentiq-web:$SHORT_SHA',
+      '-f', 'apps/web/Dockerfile',
+      '.'
+    ]
+images:
+  - 'gcr.io/$PROJECT_ID/patentiq-api:$SHORT_SHA'
+  - 'gcr.io/$PROJECT_ID/patentiq-web:$SHORT_SHA'

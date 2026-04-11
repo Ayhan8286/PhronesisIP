@@ -156,12 +156,18 @@ async def search_external_patents(
     if not data.query and not data.patent_number and not data.assignee:
         raise HTTPException(status_code=400, detail="Provide a query, patent number, or assignee")
 
-    results = await search_patents_external(
-        query=data.query,
-        assignee=data.assignee,
-        patent_number=data.patent_number,
-        max_results=data.max_results,
-    )
+    try:
+        results = await search_patents_external(
+            query=data.query,
+            assignee=data.assignee,
+            patent_number=data.patent_number,
+            max_results=data.max_results,
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=502,
+            detail=f"External patent search failed: {str(e)}",
+        )
 
     return results
 

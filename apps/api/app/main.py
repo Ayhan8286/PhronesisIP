@@ -74,10 +74,15 @@ async def global_exception_handler(request, exc):
     if isinstance(exc, (HTTPException, StarletteHTTPException)):
         raise exc
 
+    import logging
     import traceback
     error_msg = str(exc)
     error_type = type(exc).__name__
     
+    # In production, log the exception for diagnostics
+    if settings.APP_ENV != "development":
+        logging.error("Unhandled exception in FastAPI", exc_info=exc)
+
     # In development, print full traceback
     if settings.APP_ENV == "development":
         traceback.print_exc()

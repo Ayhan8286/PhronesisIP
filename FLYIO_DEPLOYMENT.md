@@ -22,7 +22,13 @@ fly auth login
 3. From the backend folder:
 ```bash
 cd apps/api
-fly deploy
+./deploy_fly.sh
+```
+
+If you are on Windows PowerShell:
+```powershell
+cd apps/api
+.\deploy_fly.ps1
 ```
 
 4. Set required secrets on Fly:

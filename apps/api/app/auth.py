@@ -102,6 +102,7 @@ async def get_current_user(
         firm_id = uuid.uuid5(uuid.NAMESPACE_URL, f"firm:{clerk_org_id}")
 
     # Check if user is a System Admin (Platform Level)
+    # REQUIRE: Management Organization ID
     is_sys_admin = False
     if settings.SYSTEM_ADMIN_ORG_ID and clerk_org_id == settings.SYSTEM_ADMIN_ORG_ID:
         is_sys_admin = True

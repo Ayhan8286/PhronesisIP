@@ -39,6 +39,7 @@ class Settings(BaseSettings):
     CLERK_JWKS_URL: str = ""
     CLERK_ISSUER: str = ""
     SYSTEM_ADMIN_ORG_ID: str = ""  # The Clerk Org ID for PhronesisIP internal management
+    SYSTEM_ADMIN_EMAILS: Any = []  # Optional email whitelist (comma-separated string)
 
     # --- AI / Embeddings ---
     VOYAGE_API_KEY: str = ""

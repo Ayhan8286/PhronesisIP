@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useUser, useClerk, OrganizationSwitcher } from "@clerk/nextjs";
+import { useUser, useClerk, OrganizationSwitcher, useOrganization } from "@clerk/nextjs";
 import {
   LayoutDashboard,
   Search,
@@ -15,6 +15,7 @@ import {
   HelpCircle,
   LogOut,
   Building2,
+  ShieldCheck
 } from "lucide-react";
 
 const navigation = [
@@ -70,6 +71,11 @@ export default function Sidebar() {
   const pathname = usePathname();
   const { user } = useUser();
   const { signOut } = useClerk();
+  const { organization } = useOrganization();
+
+  // Show Admin link if the active organization is "box mation"
+  const isAdmin = organization?.name?.toLowerCase().includes("box mation");
+
   const initials = user?.firstName && user?.lastName
     ? `${user.firstName[0]}${user.lastName[0]}`
     : user?.emailAddresses?.[0]?.emailAddress?.substring(0, 2).toUpperCase() || "??";
@@ -141,6 +147,21 @@ export default function Sidebar() {
             })}
           </div>
         ))}
+
+        {/* Admin Section (Conditional) */}
+        {isAdmin && (
+          <div className="nav-section" style={{ marginTop: 20 }}>
+            <div className="nav-section-label" style={{ color: "var(--brand-400)" }}>Platform Management</div>
+            <Link
+              href="/dashboard/admin"
+              className={`nav-item ${pathname === "/dashboard/admin" ? "active" : ""}`}
+              style={{ background: pathname === "/dashboard/admin" ? "var(--brand-500)20" : "transparent" }}
+            >
+              <ShieldCheck className="nav-item-icon" style={{ color: "var(--brand-400)" }} />
+              <span style={{ color: "var(--brand-200)" }}>Admin Control</span>
+            </Link>
+          </div>
+        )}
       </nav>
 
       {/* Bottom section */}

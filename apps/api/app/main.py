@@ -128,6 +128,7 @@ if settings.APP_ENV == "development":
 
 # Register Inngest endpoint
 import inngest.fast_api
+from app.services.inngest_client import inngest_client
 from app.services.inngest_jobs import (
     process_large_patent, process_oa_references, sync_uspto_statuses,
     daily_portfolio_sync, run_legal_analysis,

@@ -57,7 +57,7 @@ export default function DueDiligencePage() {
           patent_ids: Array.from(selectedIds),
           context: context || undefined,
         },
-        (chunk) => {
+        (chunk: string) => {
           setReportText((prev) => prev + chunk);
           if (outputRef.current) outputRef.current.scrollTop = outputRef.current.scrollHeight;
         },

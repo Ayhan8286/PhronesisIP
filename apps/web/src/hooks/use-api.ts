@@ -4,31 +4,29 @@ import { useMemo } from "react";
 
 /**
  * A hook that provides a pre-authenticated API client.
- * Refactored to fetch the latest session token for EVERY request.
- * This ensures that if the user switches organizations, the very next
- * API call will use the correct organization ID in its JWT.
+ * Uses TypeScript's ReturnType to preserve the interface of createApi
+ * while injecting fresh tokens for every request.
  */
 export function useApi() {
   const { getToken } = useAuth();
 
   const api = useMemo(() => {
     const staticApi = createApi();
-    const wrappedApi: any = {};
+    // Use the return type of createApi as the contract for our proxy
+    type ApiInterface = ReturnType<typeof createApi>;
+    const wrappedApi = {} as ApiInterface;
 
-    Object.keys(staticApi).forEach((key) => {
-      const originalMethod = (staticApi as any)[key];
+    (Object.keys(staticApi) as Array<keyof ApiInterface>).forEach((key) => {
+      const originalMethod = staticApi[key];
       
       if (typeof originalMethod === "function") {
+        // @ts-expect-error - dynamic proxying requires some casting
         wrappedApi[key] = async (...args: any[]) => {
-          // Fetch a fresh token RIGHT BEFORE the request
           const token = await getToken();
           
-          if (!token) {
-            console.warn(`useApi: No token available for ${key}. Request might fail if auth is required.`);
-          }
-
-          // Create a temporary API instance with the fresh token
-          const authenticatedApi = createApi(token || undefined) as any;
+          // Create a fresh instance for the call with the new token
+          const authenticatedApi = createApi(token || undefined);
+          // @ts-ignore - dynamic method access
           return authenticatedApi[key](...args);
         };
       }

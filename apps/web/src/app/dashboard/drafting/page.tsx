@@ -57,7 +57,7 @@ export default function DraftingPage() {
           claim_style: claimStyle,
           spec_context: specContext || undefined,
         },
-        (chunk) => {
+        (chunk: string) => {
           setDraftText((prev) => prev + chunk);
           if (outputRef.current) outputRef.current.scrollTop = outputRef.current.scrollHeight;
         },

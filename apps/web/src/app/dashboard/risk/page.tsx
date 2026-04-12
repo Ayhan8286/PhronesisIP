@@ -83,7 +83,7 @@ export default function RiskPage() {
     try {
       await api.runRiskAnalysis(
         body,
-        (chunk) => {
+        (chunk: string) => {
           setAnalysisText((prev) => prev + chunk);
           // Auto-scroll
           if (outputRef.current) {

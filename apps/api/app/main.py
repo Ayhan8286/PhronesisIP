@@ -130,7 +130,8 @@ if settings.APP_ENV == "development":
 import inngest.fast_api
 from app.services.inngest_jobs import (
     process_large_patent, process_oa_references, sync_uspto_statuses,
-    daily_portfolio_sync, run_legal_analysis
+    daily_portfolio_sync, run_legal_analysis,
+    run_portfolio_audit, run_patent_dd_check, check_and_generate_final_report
 )
 
 inngest.fast_api.serve(

@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useUser, useClerk } from "@clerk/nextjs";
+import { useUser, useClerk, OrganizationSwitcher } from "@clerk/nextjs";
 import {
   LayoutDashboard,
   Search,
@@ -14,6 +14,7 @@ import {
   Settings,
   HelpCircle,
   LogOut,
+  Building2,
 } from "lucide-react";
 
 const navigation = [
@@ -80,6 +81,37 @@ export default function Sidebar() {
       <div className="sidebar-header">
         <div className="sidebar-logo">IQ</div>
         <span className="sidebar-title">PatentIQ</span>
+      </div>
+
+      {/* Organization Switcher */}
+      <div style={{ padding: "0 12px 20px", borderBottom: "1px solid var(--glass-border)", marginBottom: 12 }}>
+        <OrganizationSwitcher
+          hidePersonal
+          afterCreateOrganizationUrl="/dashboard"
+          afterSelectOrganizationUrl="/dashboard"
+          appearance={{
+            elements: {
+              rootBox: { width: "100%", display: "flex", justifyContent: "center", alignItems: "center" },
+              organizationSwitcherTrigger: {
+                width: "100%",
+                padding: "8px 12px",
+                borderRadius: "var(--radius-md)",
+                background: "var(--bg-tertiary)",
+                border: "1px solid var(--glass-border)",
+                color: "var(--text-primary)",
+                "&:hover": {
+                  background: "var(--bg-hover)",
+                },
+              },
+              organizationPreviewTextContainer: {
+                color: "var(--text-primary)",
+              },
+              organizationSwitcherTriggerIcon: {
+                color: "var(--text-tertiary)",
+              },
+            },
+          }}
+        />
       </div>
 
       {/* Navigation */}

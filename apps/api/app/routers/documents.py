@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
 from app.models import Patent, OfficeAction
-from app.auth import get_current_user, CurrentUser
+from app.auth import get_active_firm_user, CurrentUser
 from app.services.ingestion import ingest_patent_pdf
 from app.services.document import extract_pdf_text, extract_docx_text
 from app.services.storage import upload_to_r2, get_presigned_url
@@ -25,7 +25,7 @@ async def upload_patent_pdf(
     file: UploadFile = File(...),
     patent_id: str = Form(...),
     db: AsyncSession = Depends(get_db),
-    user: CurrentUser = Depends(get_current_user),
+    user: CurrentUser = Depends(get_active_firm_user),
 ):
     """
     Upload a patent PDF → extract text → chunk → embed → generate AI summary.
@@ -77,7 +77,7 @@ async def upload_office_action_pdf(
     patent_id: str = Form(...),
     action_type: str = Form("Non-Final Rejection"),
     db: AsyncSession = Depends(get_db),
-    user: CurrentUser = Depends(get_current_user),
+    user: CurrentUser = Depends(get_active_firm_user),
 ):
     """
     Upload an office action PDF → extract text → AI-parse rejections → create OA record.
@@ -157,7 +157,7 @@ async def upload_office_action_pdf(
 async def upload_invention_spec(
     file: UploadFile = File(...),
     db: AsyncSession = Depends(get_db),
-    user: CurrentUser = Depends(get_current_user),
+    user: CurrentUser = Depends(get_active_firm_user),
 ):
     """
     Upload an invention specification / engineering doc for use in patent drafting.
@@ -193,7 +193,7 @@ async def upload_invention_spec(
 async def get_patent_summary(
     patent_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
-    user: CurrentUser = Depends(get_current_user),
+    user: CurrentUser = Depends(get_active_firm_user),
 ):
     """
     Get the AI-generated summary for a patent.
@@ -280,7 +280,7 @@ Return ONLY a valid JSON array."""
 async def get_document_view_url(
     patent_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
-    user: CurrentUser = Depends(get_current_user),
+    user: CurrentUser = Depends(get_active_firm_user),
 ):
     """
     Generate a 15-minute presigned URL to view a patent PDF.

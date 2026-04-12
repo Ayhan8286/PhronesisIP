@@ -13,7 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import get_db
 from app.models import Patent
 from app.schemas import SemanticSearchRequest, SearchResponse, SearchResultItem
-from app.auth import get_current_user, CurrentUser
+from app.auth import get_current_user, get_active_firm_user, CurrentUser
 from app.services.embeddings import generate_query_embedding
 from app.services.patent_search import search_patents_external, fetch_patent_detail, search_google_patents
 from app.services.ingestion import ingest_patent_from_external
@@ -25,7 +25,7 @@ router = APIRouter()
 async def search_patents(
     data: SemanticSearchRequest,
     db: AsyncSession = Depends(get_db),
-    user: CurrentUser = Depends(get_current_user),
+    user: CurrentUser = Depends(get_active_firm_user),
 ):
     """
     Hybrid search: combines semantic (pgvector), keyword (ts_vector) search
@@ -195,7 +195,7 @@ class ImportRequest(BaseModel):
 async def import_external_patent(
     data: ImportRequest,
     db: AsyncSession = Depends(get_db),
-    user: CurrentUser = Depends(get_current_user),
+    user: CurrentUser = Depends(get_active_firm_user),
 ):
     """
     Import an external patent from USPTO into the user's portfolio.

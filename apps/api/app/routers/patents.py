@@ -15,7 +15,7 @@ from app.schemas import (
     PatentCreate, PatentUpdate, PatentResponse, PatentListResponse,
     ClaimCreate, ClaimResponse,
 )
-from app.auth import get_current_user, CurrentUser
+from app.auth import get_active_firm_user, CurrentUser
 
 router = APIRouter()
 
@@ -27,7 +27,7 @@ async def list_patents(
     status: Optional[str] = None,
     search: Optional[str] = None,
     db: AsyncSession = Depends(get_db),
-    user: CurrentUser = Depends(get_current_user),
+    user: CurrentUser = Depends(get_active_firm_user),
 ):
     """List patents for the current firm with pagination and filtering."""
     query = select(Patent).where(Patent.firm_id == user.firm_id)
@@ -63,7 +63,7 @@ async def list_patents(
 async def get_patent(
     patent_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
-    user: CurrentUser = Depends(get_current_user),
+    user: CurrentUser = Depends(get_active_firm_user),
 ):
     """Get a single patent by ID."""
     result = await db.execute(
@@ -82,7 +82,7 @@ async def get_patent(
 async def create_patent(
     data: PatentCreate,
     db: AsyncSession = Depends(get_db),
-    user: CurrentUser = Depends(get_current_user),
+    user: CurrentUser = Depends(get_active_firm_user),
 ):
     """Create a new patent record."""
     patent = Patent(
@@ -100,7 +100,7 @@ async def update_patent(
     patent_id: uuid.UUID,
     data: PatentUpdate,
     db: AsyncSession = Depends(get_db),
-    user: CurrentUser = Depends(get_current_user),
+    user: CurrentUser = Depends(get_active_firm_user),
 ):
     """Update a patent."""
     result = await db.execute(
@@ -126,7 +126,7 @@ async def update_patent(
 async def delete_patent(
     patent_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
-    user: CurrentUser = Depends(get_current_user),
+    user: CurrentUser = Depends(get_active_firm_user),
 ):
     """Delete a patent and all related data."""
     result = await db.execute(
@@ -150,7 +150,7 @@ async def delete_patent(
 async def list_claims(
     patent_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
-    user: CurrentUser = Depends(get_current_user),
+    user: CurrentUser = Depends(get_active_firm_user),
 ):
     """List all claims for a patent."""
     # Verify patent belongs to firm
@@ -174,7 +174,7 @@ async def add_claim(
     patent_id: uuid.UUID,
     data: ClaimCreate,
     db: AsyncSession = Depends(get_db),
-    user: CurrentUser = Depends(get_current_user),
+    user: CurrentUser = Depends(get_active_firm_user),
 ):
     """Add a claim to a patent."""
     patent = await db.execute(

@@ -16,7 +16,7 @@ from sqlalchemy.orm import selectinload
 from app.database import get_db
 from app.models import Patent, PatentClaim, PriorArtReference
 from app.schemas import PriorArtCreate, PriorArtResponse
-from app.auth import get_current_user, CurrentUser
+from app.auth import get_active_firm_user, CurrentUser
 from app.services.llm import (
     generate_risk_analysis_stream,
     analyze_prior_art_stream,
@@ -31,7 +31,7 @@ router = APIRouter()
 async def list_prior_art(
     patent_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
-    user: CurrentUser = Depends(get_current_user),
+    user: CurrentUser = Depends(get_active_firm_user),
 ):
     """List prior art references for a patent."""
     # Verify patent belongs to firm
@@ -54,7 +54,7 @@ async def list_prior_art(
 async def add_prior_art(
     data: PriorArtCreate,
     db: AsyncSession = Depends(get_db),
-    user: CurrentUser = Depends(get_current_user),
+    user: CurrentUser = Depends(get_active_firm_user),
 ):
     """Add a prior art reference to a patent."""
     patent = await db.execute(
@@ -85,7 +85,7 @@ class RiskAnalysisRequest(BaseModel):
 async def run_risk_analysis(
     data: RiskAnalysisRequest,
     db: AsyncSession = Depends(get_db),
-    user: CurrentUser = Depends(get_current_user),
+    user: CurrentUser = Depends(get_active_firm_user),
 ):
     """
     Run AI-powered risk/invalidity/infringement analysis on a patent.
@@ -170,7 +170,7 @@ class PriorArtAnalysisRequest(BaseModel):
 async def analyze_prior_art(
     data: PriorArtAnalysisRequest,
     db: AsyncSession = Depends(get_db),
-    user: CurrentUser = Depends(get_current_user),
+    user: CurrentUser = Depends(get_active_firm_user),
 ):
     """
     Run AI prior art analysis on a patent.
@@ -219,7 +219,7 @@ class DueDiligenceRequest(BaseModel):
 async def generate_due_diligence(
     data: DueDiligenceRequest,
     db: AsyncSession = Depends(get_db),
-    user: CurrentUser = Depends(get_current_user),
+    user: CurrentUser = Depends(get_active_firm_user),
 ):
     """
     Generate a comprehensive due diligence report for selected patents.

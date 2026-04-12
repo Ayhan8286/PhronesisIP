@@ -14,7 +14,7 @@ from app.models import Draft, Patent
 from app.schemas import (
     DraftCreate, DraftUpdate, DraftResponse, DraftGenerationRequest,
 )
-from app.auth import get_current_user, CurrentUser
+from app.auth import get_active_firm_user, CurrentUser
 from app.services.llm import generate_patent_draft_stream
 
 router = APIRouter()
@@ -23,7 +23,7 @@ router = APIRouter()
 @router.get("/", response_model=list[DraftResponse])
 async def list_drafts(
     db: AsyncSession = Depends(get_db),
-    user: CurrentUser = Depends(get_current_user),
+    user: CurrentUser = Depends(get_active_firm_user),
 ):
     """List all drafts for the current user's firm."""
     result = await db.execute(
@@ -39,7 +39,7 @@ async def list_drafts(
 async def get_draft(
     draft_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
-    user: CurrentUser = Depends(get_current_user),
+    user: CurrentUser = Depends(get_active_firm_user),
 ):
     """Get a single draft."""
     result = await db.execute(
@@ -58,7 +58,7 @@ async def get_draft(
 async def create_draft(
     data: DraftCreate,
     db: AsyncSession = Depends(get_db),
-    user: CurrentUser = Depends(get_current_user),
+    user: CurrentUser = Depends(get_active_firm_user),
 ):
     """Create a new draft manually."""
     draft = Draft(
@@ -77,7 +77,7 @@ async def update_draft(
     draft_id: uuid.UUID,
     data: DraftUpdate,
     db: AsyncSession = Depends(get_db),
-    user: CurrentUser = Depends(get_current_user),
+    user: CurrentUser = Depends(get_active_firm_user),
 ):
     """Update draft content or status."""
     result = await db.execute(
@@ -103,7 +103,7 @@ async def update_draft(
 async def generate_draft(
     data: DraftGenerationRequest,
     db: AsyncSession = Depends(get_db),
-    user: CurrentUser = Depends(get_current_user),
+    user: CurrentUser = Depends(get_active_firm_user),
 ):
     """
     AI-generate a patent application draft.
@@ -132,7 +132,7 @@ async def generate_draft(
 async def delete_draft(
     draft_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
-    user: CurrentUser = Depends(get_current_user),
+    user: CurrentUser = Depends(get_active_firm_user),
 ):
     """Delete a draft."""
     result = await db.execute(

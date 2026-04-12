@@ -15,7 +15,7 @@ from app.models import Patent, PatentFamily, OfficeAction
 from app.schemas import (
     PatentFamilyCreate, PatentFamilyResponse, PatentResponse,
 )
-from app.auth import get_current_user, CurrentUser
+from app.auth import get_active_firm_user, CurrentUser
 
 router = APIRouter()
 
@@ -27,7 +27,7 @@ router = APIRouter()
 @router.get("/overview")
 async def portfolio_overview(
     db: AsyncSession = Depends(get_db),
-    user: CurrentUser = Depends(get_current_user),
+    user: CurrentUser = Depends(get_active_firm_user),
 ):
     """
     Get high-level portfolio statistics for the firm dashboard.
@@ -86,7 +86,7 @@ async def portfolio_overview(
 async def portfolio_timeline(
     year: Optional[int] = None,
     db: AsyncSession = Depends(get_db),
-    user: CurrentUser = Depends(get_current_user),
+    user: CurrentUser = Depends(get_active_firm_user),
 ):
     """
     Filing timeline: patents grouped by filing month/year.
@@ -119,7 +119,7 @@ async def portfolio_timeline(
 @router.get("/families", response_model=list[PatentFamilyResponse])
 async def list_families(
     db: AsyncSession = Depends(get_db),
-    user: CurrentUser = Depends(get_current_user),
+    user: CurrentUser = Depends(get_active_firm_user),
 ):
     """List all patent families for the firm."""
     result = await db.execute(
@@ -136,7 +136,7 @@ async def list_families(
 async def create_family(
     data: PatentFamilyCreate,
     db: AsyncSession = Depends(get_db),
-    user: CurrentUser = Depends(get_current_user),
+    user: CurrentUser = Depends(get_active_firm_user),
 ):
     """Create a new patent family."""
     family = PatentFamily(firm_id=user.firm_id, **data.model_dump())
@@ -150,7 +150,7 @@ async def create_family(
 async def get_family(
     family_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
-    user: CurrentUser = Depends(get_current_user),
+    user: CurrentUser = Depends(get_active_firm_user),
 ):
     """Get a patent family with its patents."""
     result = await db.execute(
@@ -171,7 +171,7 @@ async def get_family(
 async def delete_family(
     family_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
-    user: CurrentUser = Depends(get_current_user),
+    user: CurrentUser = Depends(get_active_firm_user),
 ):
     """Delete a patent family (does not delete the patents, just ungroups them)."""
     result = await db.execute(

@@ -18,7 +18,7 @@ from app.schemas import (
     OAResponseDraftCreate, OAResponseDraftResponse,
     OAResponseGenerationRequest,
 )
-from app.auth import get_current_user, CurrentUser
+from app.auth import get_active_firm_user, CurrentUser
 from app.services.llm import generate_oa_response_stream
 
 router = APIRouter()
@@ -29,7 +29,7 @@ async def list_office_actions(
     patent_id: uuid.UUID | None = None,
     status: str | None = None,
     db: AsyncSession = Depends(get_db),
-    user: CurrentUser = Depends(get_current_user),
+    user: CurrentUser = Depends(get_active_firm_user),
 ):
     """List office actions, optionally filtered by patent or status."""
     query = (
@@ -52,7 +52,7 @@ async def list_office_actions(
 async def get_office_action(
     oa_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
-    user: CurrentUser = Depends(get_current_user),
+    user: CurrentUser = Depends(get_active_firm_user),
 ):
     """Get a single office action."""
     result = await db.execute(
@@ -70,7 +70,7 @@ async def get_office_action(
 async def create_office_action(
     data: OfficeActionCreate,
     db: AsyncSession = Depends(get_db),
-    user: CurrentUser = Depends(get_current_user),
+    user: CurrentUser = Depends(get_active_firm_user),
 ):
     """Create an office action record."""
     patent = await db.execute(
@@ -96,7 +96,7 @@ async def create_office_action(
 async def list_response_drafts(
     oa_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
-    user: CurrentUser = Depends(get_current_user),
+    user: CurrentUser = Depends(get_active_firm_user),
 ):
     """List response drafts for an office action."""
     result = await db.execute(
@@ -113,7 +113,7 @@ async def generate_oa_response(
     oa_id: uuid.UUID,
     data: OAResponseGenerationRequest,
     db: AsyncSession = Depends(get_db),
-    user: CurrentUser = Depends(get_current_user),
+    user: CurrentUser = Depends(get_active_firm_user),
 ):
     """
     AI-generate a response to an office action.

@@ -30,10 +30,10 @@ class CurrentUser:
     """Authenticated user context extracted from Clerk JWT."""
     id: uuid.UUID
     clerk_user_id: str
-    firm_id: uuid.UUID
-    clerk_org_id: str
     email: str
     role: str
+    firm_id: Optional[uuid.UUID] = None
+    clerk_org_id: Optional[str] = None
 
 
 async def get_current_user(
@@ -41,7 +41,7 @@ async def get_current_user(
 ) -> CurrentUser:
     """
     FastAPI dependency: extracts and validates Clerk JWT.
-    Returns a CurrentUser with firm context for RLS.
+    Returns a CurrentUser. Firm context is OPTIONAL here to allow global tools.
     """
     if not authorization.startswith("Bearer "):
         raise HTTPException(status_code=401, detail="Invalid authorization header")
@@ -84,12 +84,6 @@ async def get_current_user(
     if not clerk_user_id:
         raise HTTPException(status_code=401, detail="Missing user ID in token")
 
-    if not clerk_org_id:
-        raise HTTPException(
-            status_code=403,
-            detail="No organization selected. Please select a firm.",
-        )
-
     # Map Clerk org role to our roles
     role_map = {
         "org:admin": "admin",
@@ -101,16 +95,33 @@ async def get_current_user(
     # In production, lookup the user and firm IDs from the database
     # For now, use deterministic UUIDs derived from Clerk IDs
     user_id = uuid.uuid5(uuid.NAMESPACE_URL, f"user:{clerk_user_id}")
-    firm_id = uuid.uuid5(uuid.NAMESPACE_URL, f"firm:{clerk_org_id}")
+    
+    firm_id = None
+    if clerk_org_id:
+        firm_id = uuid.uuid5(uuid.NAMESPACE_URL, f"firm:{clerk_org_id}")
 
     return CurrentUser(
         id=user_id,
         clerk_user_id=clerk_user_id,
-        firm_id=firm_id,
-        clerk_org_id=clerk_org_id,
         email=email,
         role=role,
+        firm_id=firm_id,
+        clerk_org_id=clerk_org_id,
     )
+
+
+async def get_active_firm_user(
+    user: CurrentUser = Depends(get_current_user),
+) -> CurrentUser:
+    """
+    Strict dependency for routes that REQUIRE a firm context (e.g., Portfolio, Ingestion).
+    """
+    if not user.clerk_org_id:
+        raise HTTPException(
+            status_code=403,
+            detail="No organization selected. Please select a firm in the sidebar switcher.",
+        )
+    return user
 
 
 # Development bypass for testing without Clerk

@@ -11,7 +11,7 @@ import json
 from app.services.inngest_client import inngest_client
 from app.services.embeddings import chunk_patent_text, generate_document_embeddings
 from app.services.llm import generate_patent_summary
-from app.models import Patent, PatentEmbedding
+from app.models import Patent, PatentEmbedding, PublicPatentCache
 from app.database import async_session_factory
 from sqlalchemy import text
 
@@ -143,76 +143,124 @@ async def process_large_patent(ctx: inngest.Context, step: inngest.Step) -> dict
 async def process_oa_references(ctx: inngest.Context, step: inngest.Step) -> dict:
     """
     Background job to fetch and embed cited prior art from an uploaded Office Action.
-    It scrapes Google Patents / USPTO for the full text of the cited reference,
-    embeds it via Voyage AI, and saves to pgvector so Claude has full visibility 
-    of the competitor's patent when drafting the response.
+    Now uses granular steps and a global cache to handle high citation volume.
     """
     import re
     from app.services.patent_search import search_google_patents
-    from app.models import OfficeAction, PriorArtReference
-    
+    from app.models import OfficeAction, PriorArtReference, PublicPatentCache
+    from app.services.embeddings import generate_document_embeddings
+
     oa_id_str = ctx.event.data["office_action_id"]
     firm_id_str = ctx.event.data["firm_id"]
-    
-    async def fetch_and_store_references():
+
+    # 1. Parse unique references from OA rejections
+    async def parse_refs():
         async with async_session_factory() as db:
             oa = await db.get(OfficeAction, uuid.UUID(oa_id_str))
             if not oa or not oa.rejections:
                 return []
-                
-            fetched = []
-            for rejection in oa.rejections:
-                for ref_str in rejection.get("references", []):
-                    # Extract roughly patent numbers like US8977255 or 8,977,255
-                    match = re.search(r"(\b[0-9]{1,2},?[0-9]{3},?[0-9]{3}\b)", ref_str)
-                    if match:
-                        pat_num = match.group(1).replace(",", "")
-                        # Fetch from Google Patents XHR
-                        search_res = await search_google_patents(pat_num, max_results=1)
-                        if search_res["patents"]:
-                            p_data = search_res["patents"][0]
-                            abstract_text = p_data.get("abstract", "")
-                            
-                            # Embed the abstract mapping via Voyage AI
-                            embeddings = await generate_document_embeddings([abstract_text], firm_id=uuid.UUID(firm_id_str), user_id=uuid.UUID(int=0)) if abstract_text else [[0.0]*1024]
-                            
-                            # Store in DB as a prior art reference
-                            pref = PriorArtReference(
-                                patent_id=oa.patent_id,
-                                reference_number=p_data.get("patent_number", pat_num),
-                                reference_title=p_data.get("title", ""),
-                                reference_abstract=abstract_text,
-                                relevance_score=0.99, # Highly relevant as examiner cited it
-                                cited_by_examiner=True,
-                                analysis_notes=f"Cited in {oa.action_type}",
-                            )
-                            db.add(pref)
-                            fetched.append(p_data.get("patent_number"))
-                            
-                            # Insert the embedding for vector comparision
-                            if abstract_text:
-                                await db.execute(
-                                    text("""
-                                        INSERT INTO patent_embeddings 
-                                            (id, patent_id, chunk_index, chunk_text, embedding, page_number, section_type, firm_id) 
-                                        VALUES 
-                                            (:id, :patent_id, 0, :chunk_text, :embedding::vector, 1, 'prior_art', :firm_id)
-                                    """),
-                                    {
-                                        "id": str(uuid.uuid4()),
-                                        "patent_id": str(oa.patent_id),
-                                        "chunk_text": f"Prior Art {pat_num}: {abstract_text}",
-                                        "embedding": str(embeddings[0]),
-                                        "firm_id": firm_id_str
-                                    }
-                                )
             
-            await db.commit()
-            return fetched
+            ref_nums = set()
+            for rej in oa.rejections:
+                for ref_str in rej.get("references", []):
+                    # Improved regex for patent numbers: US 10,123,456, 10123456, or US10123456
+                    match = re.search(r"([0-9]{1,2},?[0-9]{3},?[0-9]{3})", ref_str.replace("US", "").replace(" ", ""))
+                    if match:
+                        ref_nums.add(match.group(1).replace(",", ""))
+            return list(ref_nums)
 
-    fetched_refs = await step.run("fetch_and_store_references", fetch_and_store_references)
+    all_ref_nums = await step.run("parse_unique_references", parse_refs)
+    if not all_ref_nums:
+        return {"status": "skipped", "message": "No references found in OA."}
+
+    fetched_count = 0
     
-    return {"status": "success", "fetched": fetched_refs}
+    # 2. Process each citation in isolation to ensure granular retries
+    for pat_num in all_ref_nums:
+        async def process_single_citation():
+            async with async_session_factory() as db:
+                # A. Check Global Cache first
+                from sqlalchemy import select
+                cache_res = await db.execute(select(PublicPatentCache).where(PublicPatentCache.patent_number == pat_num))
+                cached = cache_res.scalar_one_or_none()
+                
+                title, abstract = None, None
+                if cached:
+                    title, abstract = cached.title, cached.abstract
+                else:
+                    # B. Fetch from external source
+                    search_res = await search_google_patents(pat_num, max_results=1)
+                    if search_res["patents"]:
+                        p_data = search_res["patents"][0]
+                        title = p_data.get("title", "")
+                        abstract = p_data.get("abstract", "")
+                        
+                        # Store in global cache
+                        new_cache = PublicPatentCache(
+                            patent_number=pat_num,
+                            title=title,
+                            abstract=abstract
+                        )
+                        db.add(new_cache)
+                        await db.flush() # Ensure it's ready for this session
+
+                if not abstract:
+                    return {"skipped": pat_num, "reason": "No abstract found"}
+
+                # C. Check if Firm already has this reference (Avoid duplicate PriorArtReference)
+                oa_res = await db.get(OfficeAction, uuid.UUID(oa_id_str))
+                existing = await db.execute(
+                    select(PriorArtReference).where(
+                        PriorArtReference.patent_id == oa_res.patent_id,
+                        PriorArtReference.reference_number == pat_num
+                    )
+                )
+                if existing.scalar_one_or_none():
+                    return {"already_exists": pat_num}
+
+                # D. Store in DB as a firm-specific reference
+                pref = PriorArtReference(
+                    patent_id=oa_res.patent_id,
+                    firm_id=uuid.UUID(firm_id_str),
+                    reference_number=pat_num,
+                    reference_title=title or f"Patent {pat_num}",
+                    reference_abstract=abstract,
+                    relevance_score=0.99,
+                    cited_by_examiner=True,
+                )
+                db.add(pref)
+                
+                # E. Embed and Store Vector
+                embeddings = await generate_document_embeddings([abstract], firm_id=uuid.UUID(firm_id_str), user_id=uuid.UUID(int=0))
+                
+                await db.execute(
+                    text("""
+                        INSERT INTO patent_embeddings 
+                            (id, patent_id, chunk_index, chunk_text, embedding, page_number, section_type, firm_id) 
+                        VALUES 
+                            (:id, :patent_id, 0, :chunk_text, :embedding::vector, 1, 'prior_art', :firm_id)
+                    """),
+                    {
+                        "id": str(uuid.uuid4()),
+                        "patent_id": str(oa_res.patent_id),
+                        "chunk_text": f"Prior Art {pat_num}: {abstract}",
+                        "embedding": str(embeddings[0]),
+                        "firm_id": firm_id_str
+                    }
+                )
+                
+                await db.commit()
+                return {"fetched": pat_num}
+
+        # Run each fetch as a distinct step to handle failures/timeouts individually
+        await step.run(f"fetch_ref_{pat_num}", process_single_citation)
+        fetched_count += 1
+        
+        # Throttling to respect Google Patents rate limits
+        if fetched_count % 3 == 0:
+            await step.sleep(f"throttle_{pat_num}", "2s")
+
+    return {"status": "success", "references_processed": len(all_ref_nums)}
 
 @inngest_client.create_function(
     fn_id="sync_uspto_statuses",

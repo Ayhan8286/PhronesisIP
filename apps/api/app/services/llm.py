@@ -237,6 +237,12 @@ Format the response as a formal Office Action Response with:
 - Claim amendments (if applicable)
 - Conclusion requesting allowance
 - LEGAL SAFETY: NEVER concede infringement, acknowledge validity of prior art for the purpose of anticipation/obviousness, or make any admissions that could be used against the applicant in litigation. Focus exclusively on distinguishing the technical features and legal arguments for non-obviousness.
+
+CLAIM AMENDMENT FORMATTING:
+If amending claims, use the following markers for the DOCX exporter:
+- Use <u>text</u> for any additions.
+- Use <strike>text</strike> for any deletions.
+Example: Claim 1. (Amended) A system comprising <u>a high-speed</u> processor <strike>and a memory</strike>...
 """
 
 

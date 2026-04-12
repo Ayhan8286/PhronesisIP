@@ -59,12 +59,30 @@ def generate_office_action_response_docx(
     doc.add_paragraph("\n")
 
     # 3. Content
-    # Split the draft_text by paragraphs or double newlines
+    import re
+    
+    # Split the draft_text by paragraphs
     paragraphs = draft_text.split("\n")
     for p_text in paragraphs:
         if p_text.strip():
-            p = doc.add_paragraph(p_text.strip())
+            p = doc.add_paragraph()
             p.paragraph_format.space_after = Pt(12)
+            
+            # Parse <u> and <strike> tags
+            # We use a regex to find tags and split the text into runs
+            parts = re.split(r'(<u>.*?</u>|<strike>.*?</strike>)', p_text)
+            
+            for part in parts:
+                if part.startswith("<u>") and part.endswith("</u>"):
+                    content = part[3:-4]
+                    run = p.add_run(content)
+                    run.underline = True
+                elif part.startswith("<strike>") and part.endswith("</strike>"):
+                    content = part[8:-9]
+                    run = p.add_run(content)
+                    run.font.strike = True
+                else:
+                    p.add_run(part)
 
     # 4. Signature block
     doc.add_paragraph("\n\nRespectfully submitted,")

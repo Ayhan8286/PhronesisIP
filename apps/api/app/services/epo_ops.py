@@ -164,10 +164,35 @@ class EPOClient:
                 country = _clean_val(id_obj.get("country", ""))
                 kind = _clean_val(id_obj.get("kind", ""))
                 
+                # Try to find a title in the biblio data if present
+                title = "EP Patent Reference"
+                abstract = "European Patent Office result."
+                
+                # EPO often puts titles in 'exchange-documents' or 'bibliographic-data'
+                titles = find_key_recursive(ref, "invention-title")
+                if titles:
+                    # titles[0] might be {'@lang': 'en', '$': 'Title text'}
+                    for t in titles:
+                        if isinstance(t, dict) and t.get("@lang") == "en":
+                            title = _clean_val(t)
+                            break
+                    if title == "EP Patent Reference":
+                        title = _clean_val(titles[0])
+
+                abstracts = find_key_recursive(ref, "abstract")
+                if abstracts:
+                    for a in abstracts:
+                        # abstracts might be a list of dicts with lang
+                        if isinstance(a, dict) and a.get("@lang") == "en":
+                            p_tags = find_key_recursive(a, "p")
+                            if p_tags:
+                                abstract = " ".join([_clean_val(p) for p in p_tags])
+                            break
+
                 patents.append({
                     "patent_number": f"{country}{doc_num}{kind}",
-                    "title": "EP Patent Reference",
-                    "abstract": "European Patent Office result.",
+                    "title": title,
+                    "abstract": abstract,
                     "date": "",
                     "type": "international",
                     "source": "epo_ops",

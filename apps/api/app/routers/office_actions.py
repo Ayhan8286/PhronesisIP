@@ -164,14 +164,75 @@ async def generate_oa_response(
     for r in cited_refs:
         prior_art_context += f"Reference: {r.reference_number} ({r.reference_title})\nAbstract: {r.reference_abstract}\n\n"
 
+    # 5. Concurrency Control (Semaphore)
+    from app.services.cache import cache_service
+    if not await cache_service.acquire_llm_semaphore(limit=10):
+        raise HTTPException(
+            status_code=429,
+            detail="System is currently generating responses for other attorneys. Please try again in 30 seconds."
+        )
+
+    async def wrapped_stream():
+        try:
+            async for chunk in generate_oa_response_stream(
+                office_action_text=action.extracted_text,
+                patent_title=action.patent.title,
+                patent_claims=claims_data,
+                response_strategy=data.response_strategy,
+                additional_context=data.additional_context,
+                prior_art_context=prior_art_context if prior_art_context else None,
+            ):
+                yield chunk
+        finally:
+            await cache_service.release_llm_semaphore()
+
     return StreamingResponse(
-        generate_oa_response_stream(
-            office_action_text=action.extracted_text,
-            patent_title=action.patent.title,
-            patent_claims=claims_data,
-            response_strategy=data.response_strategy,
-            additional_context=data.additional_context,
-            prior_art_context=prior_art_context if prior_art_context else None,
-        ),
+        wrapped_stream(),
         media_type="text/event-stream",
     )
+
+@router.post("/{oa_id}/drafts", response_model=OAResponseDraftResponse)
+async def save_response_draft(
+    oa_id: uuid.UUID,
+    data: OAResponseDraftCreate,
+    db: AsyncSession = Depends(get_db),
+    user: CurrentUser = Depends(get_active_firm_user),
+):
+    """
+    Save a new version of a response draft.
+    Automatically updates the Office Action status to 'responded'.
+    """
+    # Verify OA exists and belongs to firm
+    oa_res = await db.execute(
+        select(OfficeAction).where(
+            OfficeAction.id == oa_id, OfficeAction.firm_id == user.firm_id
+        )
+    )
+    oa = oa_res.scalar_one_or_none()
+    if not oa:
+        raise HTTPException(status_code=404, detail="Office action not found")
+
+    # Get latest version number
+    v_res = await db.execute(
+        select(func.max(OAResponseDraft.version))
+        .where(OAResponseDraft.office_action_id == oa_id)
+    )
+    max_v = v_res.scalar() or 0
+
+    draft = OAResponseDraft(
+        office_action_id=oa_id,
+        firm_id=user.firm_id,
+        created_by=user.id,
+        draft_content=data.draft_content,
+        ai_model_used=data.ai_model_used or "gemini-2.0-flash",
+        version=max_v + 1,
+    )
+    
+    # Update OA status (UX Requirement)
+    oa.status = "responded"
+    
+    db.add(draft)
+    db.add(oa)
+    await db.commit()
+    await db.refresh(draft)
+    return OAResponseDraftResponse.model_validate(draft)

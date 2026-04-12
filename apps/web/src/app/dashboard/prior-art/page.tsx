@@ -2,7 +2,8 @@
 
 import { useState } from "react";
 import Header from "@/components/Header";
-import { api, SearchResult, ExternalPatent } from "@/lib/api";
+import { SearchResult, ExternalPatent } from "@/lib/api";
+import { useApi } from "@/hooks/use-api";
 import { getErrorMessage } from "@/lib/utils";
 import {
   Search, Loader2, Globe, Database,
@@ -12,6 +13,7 @@ import {
 type SearchMode = "local" | "uspto" | "google";
 
 export default function PriorArtPage() {
+  const api = useApi();
   const [query, setQuery] = useState("");
   const [assignee, setAssignee] = useState("");
   const [patentNumber, setPatentNumber] = useState("");

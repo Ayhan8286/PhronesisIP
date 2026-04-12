@@ -2,13 +2,15 @@
 
 import { useEffect, useState, useRef } from "react";
 import Header from "@/components/Header";
-import { api, Draft } from "@/lib/api";
+import { Draft } from "@/lib/api";
+import { useApi } from "@/hooks/use-api";
 import { getErrorMessage } from "@/lib/utils";
 import {
   Sparkles, Loader2, FileText, Upload, Save, PenTool, Plus
 } from "lucide-react";
 
 export default function DraftingPage() {
+  const api = useApi();
   const [description, setDescription] = useState("");
   const [techField, setTechField] = useState("");
   const [claimStyle, setClaimStyle] = useState("apparatus");

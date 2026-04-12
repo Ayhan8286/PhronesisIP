@@ -2,14 +2,16 @@ const API_URL = process.env.NEXT_PUBLIC_API_URL?.trim().replace(/\/$/, "") || ""
 
 export async function apiFetch<T>(
   path: string,
-  options: RequestInit = {}
+  options: RequestInit & { token?: string } = {}
 ): Promise<T> {
+  const { token, ...fetchOptions } = options;
   const url = `${API_URL}${path}`;
   const res = await fetch(url, {
-    ...options,
+    ...fetchOptions,
     headers: {
       "Content-Type": "application/json",
-      ...options.headers,
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      ...fetchOptions.headers,
     },
   });
   if (!res.ok) {
@@ -24,10 +26,14 @@ export async function apiFetch<T>(
 export async function apiUpload<T>(
   path: string,
   formData: FormData,
+  token?: string
 ): Promise<T> {
   const url = `${API_URL}${path}`;
   const res = await fetch(url, {
     method: "POST",
+    headers: {
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
     body: formData,
   });
   if (!res.ok) {
@@ -41,12 +47,16 @@ export async function apiStream(
   path: string,
   body: object,
   onChunk: (text: string) => void,
-  onDone?: () => void
+  onDone?: () => void,
+  token?: string
 ) {
   const url = `${API_URL}${path}`;
   const res = await fetch(url, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { 
+      "Content-Type": "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
     body: JSON.stringify(body),
   });
 
@@ -236,28 +246,31 @@ export interface PatentUploadResponse {
   summary: PatentSummary;
 }
 
-// API Functions
-export const api = {
+// API Logic
+export const createApi = (token?: string) => ({
   // Patents
   listPatents: (page = 1, search?: string) =>
     apiFetch<PatentListResponse>(
-      `/api/v1/patents/?page=${page}${search ? `&search=${encodeURIComponent(search)}` : ""}`
+      `/api/v1/patents/?page=${page}${search ? `&search=${encodeURIComponent(search)}` : ""}`,
+      { token }
     ),
-  getPatent: (id: string) => apiFetch<Patent>(`/api/v1/patents/${id}`),
+  getPatent: (id: string) => 
+    apiFetch<Patent>(`/api/v1/patents/${id}`, { token }),
   getClaims: (patentId: string) =>
     apiFetch<Array<{ id: string; claim_number: number; claim_text: string; is_independent: boolean }>>(
-      `/api/v1/patents/${patentId}/claims`
+      `/api/v1/patents/${patentId}/claims`,
+      { token }
     ),
 
   // Portfolio
-  getOverview: () => apiFetch<PortfolioOverview>("/api/v1/portfolio/overview"),
-  listFamilies: () => apiFetch<PatentFamily[]>("/api/v1/portfolio/families"),
+  getOverview: () => apiFetch<PortfolioOverview>("/api/v1/portfolio/overview", { token }),
+  listFamilies: () => apiFetch<PatentFamily[]>("/api/v1/portfolio/families", { token }),
 
   // Office Actions
-  listOfficeActions: () => apiFetch<OfficeAction[]>("/api/v1/office-actions/"),
+  listOfficeActions: () => apiFetch<OfficeAction[]>("/api/v1/office-actions/", { token }),
 
   // Drafts
-  listDrafts: () => apiFetch<Draft[]>("/api/v1/drafting/"),
+  listDrafts: () => apiFetch<Draft[]>("/api/v1/drafting/", { token }),
 
   // Local Search
   searchPatents: (query: string, type = "hybrid", topK = 20) =>
@@ -266,6 +279,7 @@ export const api = {
       {
         method: "POST",
         body: JSON.stringify({ query, search_type: type, top_k: topK }),
+        token,
       }
     ),
 
@@ -276,16 +290,17 @@ export const api = {
       {
         method: "POST",
         body: JSON.stringify({ query, assignee, patent_number: patentNumber, max_results: 25 }),
+        token,
       }
     ),
 
   getExternalPatentDetail: (patentNumber: string) =>
-    apiFetch<PatentDetail>(`/api/v1/search/external/${encodeURIComponent(patentNumber)}/detail`),
+    apiFetch<PatentDetail>(`/api/v1/search/external/${encodeURIComponent(patentNumber)}/detail`, { token }),
 
   importPatent: (patentNumber: string) =>
     apiFetch<{ message: string; patent_id: string; title: string; claims_imported: number }>(
       "/api/v1/search/import",
-      { method: "POST", body: JSON.stringify({ patent_number: patentNumber }) }
+      { method: "POST", body: JSON.stringify({ patent_number: patentNumber }), token }
     ),
 
   // Google Patents (International)
@@ -295,6 +310,7 @@ export const api = {
       {
         method: "POST",
         body: JSON.stringify({ query, assignee, country, max_results: 20 }),
+        token,
       }
     ),
 
@@ -304,7 +320,8 @@ export const api = {
     formData.append("file", file);
     return apiUpload<ZipUploadResponse>(
       "/api/v1/documents/upload-zip",
-      formData
+      formData,
+      token
     );
   },
 
@@ -314,7 +331,8 @@ export const api = {
     formData.append("patent_id", patentId);
     return apiUpload<PatentUploadResponse>(
       "/api/v1/documents/upload-patent",
-      formData
+      formData,
+      token
     );
   },
 
@@ -325,7 +343,8 @@ export const api = {
     formData.append("action_type", actionType);
     return apiUpload<OfficeActionUploadResponse>(
       "/api/v1/documents/upload-office-action",
-      formData
+      formData,
+      token
     );
   },
 
@@ -334,33 +353,39 @@ export const api = {
     formData.append("file", file);
     return apiUpload<{ message: string; text_length: number; extracted_text: string }>(
       "/api/v1/documents/upload-spec",
-      formData
+      formData,
+      token
     );
   },
 
   getPatentSummary: (patentId: string) =>
     apiFetch<{ patent_id: string; title: string; summary: PatentSummary }>(
-      `/api/v1/documents/${patentId}/summary`
+      `/api/v1/documents/${patentId}/summary`,
+      { token }
     ),
 
   getDocumentViewUrl: (patentId: string) =>
     apiFetch<{ url: string; expires_in: number }>(
-      `/api/v1/documents/${patentId}/view-url`
+      `/api/v1/documents/${patentId}/view-url`,
+      { token }
     ),
 
   // AI Streaming
   generateDraft: (body: object, onChunk: (t: string) => void, onDone?: () => void) =>
-    apiStream("/api/v1/drafting/generate", body, onChunk, onDone),
+    apiStream("/api/v1/drafting/generate", body, onChunk, onDone, token),
 
   generateOAResponse: (oaId: string, body: object, onChunk: (t: string) => void, onDone?: () => void) =>
-    apiStream(`/api/v1/office-actions/${oaId}/generate-response`, body, onChunk, onDone),
+    apiStream(`/api/v1/office-actions/${oaId}/generate-response`, body, onChunk, onDone, token),
 
   runRiskAnalysis: (body: object, onChunk: (t: string) => void, onDone?: () => void) =>
-    apiStream("/api/v1/prior-art/risk-analysis", body, onChunk, onDone),
+    apiStream("/api/v1/prior-art/risk-analysis", body, onChunk, onDone, token),
 
   runPriorArtAnalysis: (body: object, onChunk: (t: string) => void, onDone?: () => void) =>
-    apiStream("/api/v1/prior-art/analyze", body, onChunk, onDone),
+    apiStream("/api/v1/prior-art/analyze", body, onChunk, onDone, token),
 
   generateDueDiligence: (body: object, onChunk: (t: string) => void, onDone?: () => void) =>
-    apiStream("/api/v1/prior-art/due-diligence", body, onChunk, onDone),
-};
+    apiStream("/api/v1/prior-art/due-diligence", body, onChunk, onDone, token),
+});
+
+// Original api object kept for compatibility with any existing static imports, but empty/null token
+export const api = createApi();

@@ -2,13 +2,15 @@
 
 import { useEffect, useState, useRef } from "react";
 import Header from "@/components/Header";
-import { api, Patent } from "@/lib/api";
+import { Patent } from "@/lib/api";
+import { useApi } from "@/hooks/use-api";
 import { getErrorMessage } from "@/lib/utils";
 import {
   Scale, Sparkles, Loader2, FileText, BarChart3, TrendingUp, CheckSquare, Square
 } from "lucide-react";
 
 export default function DueDiligencePage() {
+  const api = useApi();
   const [patents, setPatents] = useState<Patent[]>([]);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [context, setContext] = useState("");

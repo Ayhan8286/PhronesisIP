@@ -2,7 +2,8 @@
 
 import { useEffect, useState } from "react";
 import Header from "@/components/Header";
-import { api, Patent, PortfolioOverview, OfficeAction } from "@/lib/api";
+import { Patent, PortfolioOverview, OfficeAction } from "@/lib/api";
+import { useApi } from "@/hooks/use-api";
 import {
   FileText,
   CheckCircle2,
@@ -23,6 +24,7 @@ const statusColors: Record<string, string> = {
 };
 
 export default function DashboardPage() {
+  const api = useApi();
   const [overview, setOverview] = useState<PortfolioOverview | null>(null);
   const [patents, setPatents] = useState<Patent[]>([]);
   const [officeActions, setOfficeActions] = useState<OfficeAction[]>([]);

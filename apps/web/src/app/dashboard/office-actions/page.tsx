@@ -2,7 +2,8 @@
 
 import { useEffect, useMemo, useState, useRef } from "react";
 import Header from "@/components/Header";
-import { api, OfficeAction, Patent } from "@/lib/api";
+import { OfficeAction, Patent } from "@/lib/api";
+import { useApi } from "@/hooks/use-api";
 import { getErrorMessage } from "@/lib/utils";
 import {
   Mail, Upload, Sparkles, Loader2, Clock, AlertTriangle,
@@ -10,6 +11,7 @@ import {
 } from "lucide-react";
 
 export default function OfficeActionsPage() {
+  const api = useApi();
   const [actions, setActions] = useState<OfficeAction[]>([]);
   const [loading, setLoading] = useState(true);
   const [expandedOA, setExpandedOA] = useState<string | null>(null);

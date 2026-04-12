@@ -2,7 +2,8 @@
 
 import { useEffect, useState } from "react";
 import Header from "@/components/Header";
-import { api, PatentFamily, Patent, OfficeAction } from "@/lib/api";
+import { PatentFamily, Patent, OfficeAction } from "@/lib/api";
+import { useApi } from "@/hooks/use-api";
 import {
   FolderTree, Plus, Download, ChevronRight, FileText,
   Loader2, ShieldCheck, AlertTriangle, Clock, TrendingUp,
@@ -10,6 +11,7 @@ import {
 } from "lucide-react";
 
 export default function PortfolioPage() {
+  const api = useApi();
   const [families, setFamilies] = useState<PatentFamily[]>([]);
   const [patents, setPatents] = useState<Patent[]>([]);
   const [upcomingDeadlinesState, setUpcomingDeadlinesState] = useState<Array<OfficeAction & { daysRemaining: number }>>([]);

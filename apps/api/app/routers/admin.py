@@ -73,7 +73,8 @@ async def get_platform_economics(
         func.sum(UsageLog.input_tokens).label("total_in"),
         func.sum(UsageLog.output_tokens).label("total_out")
     )
-    totals = (await db.execute(totals_stmt)).first()
+    totals_result = await db.execute(totals_stmt)
+    totals = totals_result.first()
 
     # 2. Top 5 Firms by Usage (Last 30 Days)
     thirty_days_ago = datetime.now() - timedelta(days=30)
@@ -88,15 +89,70 @@ async def get_platform_economics(
     
     top_firms = (await db.execute(top_firms_stmt)).all()
 
+    # 3. Monthly Trend (last 7 days for chart)
+    trend_stmt = select(
+        func.date_trunc('day', UsageLog.created_at).label('day'),
+        func.sum(UsageLog.estimated_cost_usd).label('cost')
+    ).where(UsageLog.created_at >= datetime.now() - timedelta(days=7))\
+     .group_by(text('day'))\
+     .order_by(text('day ASC'))
+    
+    trend_results = (await db.execute(trend_stmt)).all()
+    trend_data = [{"name": r.day.strftime("%a"), "cost": float(r.cost or 0)} for r in trend_results]
+
     return {
         "cumulative": {
-            "cost_usd": totals.total_cost or 0.0,
-            "tokens_in": totals.total_in or 0,
-            "tokens_out": totals.total_out or 0,
+            "cost_usd": float(totals.total_cost or 0.0),
+            "tokens_in": int(totals.total_in or 0),
+            "tokens_out": int(totals.total_out or 0),
         },
         "top_consumers_30d": [
-            {"firm": f.name, "cost": f.cost} for f in top_firms
-        ]
+            {"firm": f.name, "cost": float(f.cost or 0)} for f in top_firms
+        ],
+        "trend": trend_data
+    }
+
+@router.get("/analytics/usage", response_model=List[Dict[str, Any]])
+async def get_usage_analytics(
+    db: AsyncSession = Depends(get_db),
+    admin: CurrentUser = Depends(get_system_admin)
+):
+    """Fetch top used features/actions from AuditLog."""
+    stmt = select(
+        AuditLog.action,
+        func.count(AuditLog.id).label("count")
+    ).group_by(AuditLog.action)\
+     .order_by(text("count DESC"))\
+     .limit(10)
+    
+    results = (await db.execute(stmt)).all()
+    return [{"action": r.action, "count": r.count} for r in results]
+
+@router.get("/analytics/errors", response_model=Dict[str, Any])
+async def get_error_analytics(
+    db: AsyncSession = Depends(get_db),
+    admin: CurrentUser = Depends(get_system_admin)
+):
+    """Categorize and count recent incidents."""
+    # Count by level
+    stmt_level = select(
+        SystemIncident.level,
+        func.count(SystemIncident.id).label("count")
+    ).group_by(SystemIncident.level)
+    
+    levels = (await db.execute(stmt_level)).all()
+    
+    # Count by source
+    stmt_source = select(
+        SystemIncident.source,
+        func.count(SystemIncident.id).label("count")
+    ).group_by(SystemIncident.source).limit(5)
+    
+    sources = (await db.execute(stmt_source)).all()
+    
+    return {
+        "levels": {r.level: r.count for r in levels},
+        "sources": [{"name": r.source, "count": r.count} for r in sources]
     }
 
 @router.get("/monitoring/jobs", response_model=List[Dict[str, Any]])

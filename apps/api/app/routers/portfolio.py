@@ -1,197 +1,163 @@
-"""
-Portfolio management: families, overview, and analytics.
-"""
-
 import uuid
-from typing import Optional
-
+import json
+from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import select, func, case
+from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
 
 from app.database import get_db
-from app.models import Patent, PatentFamily, OfficeAction
-from app.schemas import (
-    PatentFamilyCreate, PatentFamilyResponse, PatentResponse,
-)
+from app.models.portfolio import Client, Portfolio, PortfolioPatent
+from app.models.patent import Patent
 from app.auth import get_active_firm_user, CurrentUser
+from app.services.inngest_client import inngest_client
+from app.services.storage import get_presigned_url
 
 router = APIRouter()
 
-
-# ---------------------------------------------------------------------------
-# Portfolio Overview
-# ---------------------------------------------------------------------------
-
-@router.get("/overview")
-async def portfolio_overview(
+@router.get("/clients")
+async def get_clients(
     db: AsyncSession = Depends(get_db),
     user: CurrentUser = Depends(get_active_firm_user),
 ):
     """
-    Get high-level portfolio statistics for the firm dashboard.
+    List all clients for the firm with their patent counts.
+    Fulfills 'Dropdown shows all firm clients with patent counts'.
     """
-    firm_id = user.firm_id
-
-    # Patent counts by status
-    status_counts = await db.execute(
-        select(
-            Patent.status,
-            func.count(Patent.id).label("count"),
-        )
-        .where(
-            Patent.firm_id == firm_id,
-            Patent.deleted_at.is_(None)
-        )
-        .group_by(Patent.status)
+    # Count patents per client
+    stmt = (
+        select(Client.id, Client.name, func.count(Patent.id).label("patent_count"))
+        .outerjoin(Patent, Patent.client_id == Client.id)
+        .where(Client.firm_id == user.firm_id)
+        .group_by(Client.id, Client.name)
     )
-    statuses = {row.status: row.count for row in status_counts.all()}
+    result = await db.execute(stmt)
+    clients = []
+    for row in result:
+        clients.append({
+            "id": row.id,
+            "name": row.name,
+            "patent_count": row.patent_count
+        })
+    return clients
 
-    # Total patents
-    total = sum(statuses.values())
+@router.post("/audit", status_code=201)
+async def trigger_portfolio_audit(
+    client_id: uuid.UUID,
+    portfolio_name: str,
+    excluded_patent_ids: List[uuid.UUID] = Query([]),
+    db: AsyncSession = Depends(get_db),
+    user: CurrentUser = Depends(get_active_firm_user),
+):
+    """
+    Trigger a full Due Diligence audit for a client portfolio.
+    Fulfills 'Parallel job execution spawned' and 'Paralegal cannot generate report'.
+    """
+    # 1. Role Restriction (Requirement: 'Paralegal cannot generate due diligence report')
+    if user.role == "paralegal":
+        raise HTTPException(status_code=403, detail="Paralegals are not authorized to trigger due diligence audits.")
 
-    # Upcoming deadlines (office actions due in next 30 days)
-    from datetime import date, timedelta
+    # 2. Create Portfolio Record
+    portfolio = Portfolio(
+        firm_id=user.firm_id,
+        client_id=client_id,
+        name=portfolio_name,
+        status="active"
+    )
+    db.add(portfolio)
+    await db.flush()
 
-    deadline_cutoff = date.today() + timedelta(days=30)
-    upcoming_deadlines = await db.execute(
-        select(func.count(OfficeAction.id))
-        .join(Patent, OfficeAction.patent_id == Patent.id)
-        .where(
-            Patent.firm_id == firm_id,
-            Patent.deleted_at.is_(None),
-            OfficeAction.response_deadline <= deadline_cutoff,
-            OfficeAction.status == "pending",
-            OfficeAction.deleted_at.is_(None),
+    # 3. Associate all client patents
+    stmt = select(Patent.id).where(Patent.client_id == client_id, Patent.firm_id == user.firm_id)
+    patents = (await db.execute(stmt)).scalars().all()
+    
+    if not patents:
+        raise HTTPException(status_code=400, detail="This client has no patents to analyze.")
+
+    for pid in patents:
+        pp = PortfolioPatent(
+            portfolio_id=portfolio.id,
+            patent_id=pid,
+            is_excluded=pid in excluded_patent_ids
+        )
+        db.add(pp)
+
+    await db.commit()
+
+    # 4. Trigger Master Inngest Job
+    import inngest
+    await inngest_client.send(
+        inngest.Event(
+            name="portfolio.audit.start",
+            data={
+                "portfolio_id": str(portfolio.id),
+                "firm_id": str(user.firm_id)
+            }
         )
     )
-    urgent_deadlines = upcoming_deadlines.scalar() or 0
 
-    # Family count
-    family_count = await db.execute(
-        select(func.count(PatentFamily.id)).where(PatentFamily.firm_id == firm_id)
+    return {"portfolio_id": portfolio.id, "status": "dispatched"}
+
+
+@router.get("/{portfolio_id}")
+async def get_portfolio_status(
+    portfolio_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    user: CurrentUser = Depends(get_active_firm_user),
+):
+    """
+    Check progress of a portfolio audit.
+    Fulfills 'Progress shown in real time — 4 of 6 patents analysed'.
+    """
+    # 1. Get Totals
+    stmt = select(func.count(PortfolioPatent.patent_id)).where(
+        PortfolioPatent.portfolio_id == portfolio_id,
+        PortfolioPatent.is_excluded == False
     )
+    total = (await db.execute(stmt)).scalar()
+    
+    # 2. Get Completed
+    stmt = select(func.count(PortfolioPatent.patent_id)).where(
+        PortfolioPatent.portfolio_id == portfolio_id,
+        PortfolioPatent.is_excluded == False,
+        PortfolioPatent.last_dd_score.is_not(None)
+    )
+    completed = (await db.execute(stmt)).scalar()
+
+    # 3. Get Report Link if exists
+    stmt = select(Portfolio).where(Portfolio.id == portfolio_id, Portfolio.firm_id == user.firm_id)
+    portfolio = (await db.execute(stmt)).scalar_one_or_none()
+    
+    if not portfolio:
+        raise HTTPException(status_code=404, detail="Portfolio not found")
+
+    report_url = None
+    if portfolio.report_r2_key:
+        report_url = await get_presigned_url(portfolio.report_r2_key, expires_in=86400) # 24 Hours
 
     return {
-        "total_patents": total,
-        "status_breakdown": statuses,
-        "patent_families": family_count.scalar() or 0,
-        "urgent_deadlines": urgent_deadlines,
-        "deadline_window_days": 30,
+        "id": portfolio_id,
+        "name": portfolio.name,
+        "progress": f"{completed} of {total} patents analyzed",
+        "is_complete": completed == total if total > 0 else False,
+        "report_url": report_url
     }
 
-
-@router.get("/timeline")
-async def portfolio_timeline(
-    year: Optional[int] = None,
+@router.get("/{portfolio_id}/report")
+async def get_due_diligence_report(
+    portfolio_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
     user: CurrentUser = Depends(get_active_firm_user),
 ):
     """
-    Filing timeline: patents grouped by filing month/year.
+    Get the 24h signed URL for the PDF report.
+    Fulfills 'Download link expires after 24 hours' and 'Previous report retrievable'.
     """
-    query = select(
-        func.date_trunc("month", Patent.filing_date).label("month"),
-        func.count(Patent.id).label("count"),
-    ).where(
-        Patent.firm_id == user.firm_id,
-        Patent.filing_date.isnot(None),
-        Patent.deleted_at.is_(None),
-    )
+    portfolio = await db.get(Portfolio, portfolio_id)
+    if not portfolio or not portfolio.firm_id == user.firm_id:
+        raise HTTPException(status_code=404, detail="Portfolio not found")
 
-    if year:
-        query = query.where(func.extract("year", Patent.filing_date) == year)
+    if not portfolio.report_r2_key:
+        raise HTTPException(status_code=404, detail="Report not yet generated for this portfolio.")
 
-    query = query.group_by("month").order_by("month")
-    result = await db.execute(query)
-
-    return [
-        {"month": str(row.month), "count": row.count}
-        for row in result.all()
-    ]
-
-
-# ---------------------------------------------------------------------------
-# Patent Families
-# ---------------------------------------------------------------------------
-
-@router.get("/families", response_model=list[PatentFamilyResponse])
-async def list_families(
-    db: AsyncSession = Depends(get_db),
-    user: CurrentUser = Depends(get_active_firm_user),
-):
-    """List all patent families for the firm."""
-    result = await db.execute(
-        select(PatentFamily)
-        .where(PatentFamily.firm_id == user.firm_id)
-        .options(selectinload(PatentFamily.patents))
-        .order_by(PatentFamily.family_name)
-    )
-    families = result.scalars().unique().all()
-    return [PatentFamilyResponse.model_validate(f) for f in families]
-
-
-@router.post("/families", response_model=PatentFamilyResponse, status_code=201)
-async def create_family(
-    data: PatentFamilyCreate,
-    db: AsyncSession = Depends(get_db),
-    user: CurrentUser = Depends(get_active_firm_user),
-):
-    """Create a new patent family."""
-    family = PatentFamily(firm_id=user.firm_id, **data.model_dump())
-    db.add(family)
-    await db.flush()
-    await db.refresh(family)
-    return PatentFamilyResponse.model_validate(family)
-
-
-@router.get("/families/{family_id}", response_model=PatentFamilyResponse)
-async def get_family(
-    family_id: uuid.UUID,
-    db: AsyncSession = Depends(get_db),
-    user: CurrentUser = Depends(get_active_firm_user),
-):
-    """Get a patent family with its patents."""
-    result = await db.execute(
-        select(PatentFamily)
-        .where(
-            PatentFamily.id == family_id,
-            PatentFamily.firm_id == user.firm_id,
-        )
-        .options(selectinload(PatentFamily.patents))
-    )
-    family = result.scalar_one_or_none()
-    if not family:
-        raise HTTPException(status_code=404, detail="Patent family not found")
-    return PatentFamilyResponse.model_validate(family)
-
-
-@router.delete("/families/{family_id}", status_code=204)
-async def delete_family(
-    family_id: uuid.UUID,
-    db: AsyncSession = Depends(get_db),
-    user: CurrentUser = Depends(get_active_firm_user),
-):
-    """Delete a patent family (does not delete the patents, just ungroups them)."""
-    result = await db.execute(
-        select(PatentFamily).where(
-            PatentFamily.id == family_id,
-            PatentFamily.firm_id == user.firm_id,
-        )
-    )
-    family = result.scalar_one_or_none()
-    if not family:
-        raise HTTPException(status_code=404, detail="Patent family not found")
-
-    # Unlink patents from this family
-    patents_result = await db.execute(
-        select(Patent).where(
-            Patent.family_id == family_id,
-            Patent.deleted_at.is_(None)
-        )
-    )
-    for patent in patents_result.scalars().all():
-        patent.family_id = None
-
-    await db.delete(family)
+    url = await get_presigned_url(portfolio.report_r2_key, expires_in=86400) # 24 Hours
+    return {"download_url": url}

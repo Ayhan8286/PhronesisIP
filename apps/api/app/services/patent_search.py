@@ -18,51 +18,66 @@ async def search_patents_external(
     max_results: int = 25,
 ) -> dict:
     """
-    Search for patents using Google Patents (Global).
+    Search for patents across official and global sources in parallel.
+    Sources: Google Patents (Global), USPTO ODP (Official US), EPO OPS (Official EU).
     """
-    # 1. Search Google Patents (Broad, Global)
-    search_terms = query
-    if assignee:
-        search_terms += f' assignee:"{assignee}"'
-    if patent_number:
-        search_terms += f" {patent_number}"
-
-    google_results = await search_google_patents(
-        search_terms,
-        assignee=None,
-        country=None,  # Search globally
-        max_results=max_results,
-    )
-
-    # 2. Search EPO (Official European Source)
-    epo_results = {"patents": [], "total": 0}
+    import asyncio
+    
+    # 1. Dispatch searches in parallel with timeouts
+    # We use asyncio.gather with return_exceptions=True to gracefully handle individual provider failures
+    search_tasks = [
+        asyncio.create_task(search_google_patents(query, assignee=assignee, max_results=max_results)),
+        asyncio.create_task(_search_odp(query, assignee=assignee, patent_number=patent_number, max_results=max_results))
+    ]
+    
     if settings.EPO_CLIENT_ID:
-        try:
-            # Convert simple query to CQL-like for EPO
-            epo_query = query
-            if assignee:
-                # Basic personal name or corp name search in EPO
-                epo_query = f'pa="{assignee}" and ({query})'
-            epo_results = await epo_client.search(epo_query, max_results=max_results)
-        except Exception:
-            pass
+        # Standardize query for EPO (pa="assignee" and (query))
+        epo_query = query
+        if assignee:
+            epo_query = f'pa="{assignee}" and ({query})'
+        search_tasks.append(asyncio.create_task(epo_client.search(epo_query, max_results=max_results)))
 
-    # 3. Merge and Deduplicate
-    all_patents = google_results.get("patents", []) + epo_results.get("patents", [])
+    # Wait for all with a 25s global timeout (USPTO can be slow)
+    results_list = await asyncio.gather(*search_tasks, return_exceptions=True)
+    
+    google_res = results_list[0] if not isinstance(results_list[0], Exception) else {"patents": [], "total": 0}
+    uspto_res = results_list[1] if not isinstance(results_list[1], Exception) else {"patents": [], "total": 0}
+    epo_res = results_list[2] if len(results_list) > 2 and not isinstance(results_list[2], Exception) else {"patents": [], "total": 0}
 
-    # Deduplicate by patent number
-    seen = set()
-    unique_patents = []
-    for p in all_patents:
-        pnum = p.get("patent_number", "").replace(" ", "").upper()
-        if pnum and pnum not in seen:
-            seen.add(pnum)
-            unique_patents.append(p)
+    # 2. Merge and Deduplicate with Normalization
+    seen_ids = set()
+    merged_patents = []
+    
+    # Combined results - USPTO has better biblio data, Google has better abstracts
+    all_raw = (
+        uspto_res.get("patents", []) + 
+        google_res.get("patents", []) + 
+        epo_res.get("patents", [])
+    )
+    
+    for p in all_raw:
+        # Standardize ID: US10123456
+        raw_num = p.get("patent_number", "").replace(" ", "").replace("-", "").upper()
+        if not raw_num:
+            continue
+            
+        if raw_num not in seen_ids:
+            seen_ids.add(raw_num)
+            # Standardize source-specific field names (Google uses snippet)
+            if not p.get("abstract") and p.get("snippet"):
+                p["abstract"] = p["snippet"]
+            merged_patents.append(p)
 
+    total_est = sum(res.get("total", 0) for res in [google_res, uspto_res, epo_res] if isinstance(res, dict))
+    
     return {
-        "patents": unique_patents[:max_results],
-        "total": max(google_results.get("total", 0), epo_results.get("total", 0)),
-        "sources": ["google_patents"] + (["epo_ops"] if epo_results.get("patents") else [])
+        "patents": merged_patents[:max_results],
+        "total": total_est,
+        "sources": {
+            "google_patents": len(google_res.get("patents", [])),
+            "uspto_odp": len(uspto_res.get("patents", [])),
+            "epo_ops": len(epo_res.get("patents", [])),
+        }
     }
 
 

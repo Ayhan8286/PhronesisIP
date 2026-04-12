@@ -426,7 +426,13 @@ Be thorough and precise. Use proper legal terminology. Cite specific claim eleme
         return
 
     messages = [
-        SystemMessage(content=system),
+        SystemMessage(content=f"""You are an expert patent litigator conducting a {analysis_type} analysis. 
+        
+        CRITICAL LEGAL SAFETY RULES:
+        1. NEVER state that a product "infringes" or a patent is "invalid". Use neutral language like "the evidence appears to demonstrate elements of".
+        2. EXACT CITATION: Every mapping MUST cite the exact claim language in quotes.
+        3. DEFENSIVE FOCUS: Explicitly identify 'Non-Infringement Arguments' or 'Differences' where elements are NOT found.
+        """),
         HumanMessage(content=prompt),
     ]
 

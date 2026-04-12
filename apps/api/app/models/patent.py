@@ -21,8 +21,12 @@ class Patent(Base):
     )
     application_number: Mapped[str] = mapped_column(String(50), nullable=False)
     patent_number: Mapped[Optional[str]] = mapped_column(String(50))
+    client_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("clients.id", ondelete="SET NULL"), nullable=True, index=True
+    )
     title: Mapped[str] = mapped_column(Text, nullable=False)
     abstract: Mapped[Optional[str]] = mapped_column(Text)
+    full_description: Mapped[Optional[str]] = mapped_column(Text)
     status: Mapped[str] = mapped_column(
         String(50), default="pending"
     )  # pending, granted, abandoned, expired
@@ -34,8 +38,12 @@ class Patent(Base):
     classification: Mapped[Optional[dict]] = mapped_column(JSONB, default={})
     patent_metadata: Mapped[Optional[dict]] = mapped_column("metadata", JSONB, default={})
     family_id: Mapped[Optional[uuid.UUID]] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("patent_families.id"), nullable=True
+        UUID(as_uuid=True), ForeignKey("patent_families.id"), nullable=True, index=True
     )
+    
+    # Ownership: OWNED (standard), LICENSED (external)
+    ownership_type: Mapped[str] = mapped_column(String(20), default="OWNED", index=True)
+    license_expiry: Mapped[Optional[date]] = mapped_column(Date)
     
     # Soft Delete Support
     deleted_at: Mapped[Optional[datetime]] = mapped_column(
@@ -51,6 +59,7 @@ class Patent(Base):
 
     # Relationships
     firm: Mapped["Firm"] = relationship(back_populates="patents")
+    client: Mapped[Optional["Client"]] = relationship(back_populates="patents")
     family: Mapped[Optional["PatentFamily"]] = relationship(back_populates="patents")
     claims: Mapped[List["PatentClaim"]] = relationship(
         back_populates="patent", cascade="all, delete-orphan"
@@ -65,6 +74,9 @@ class Patent(Base):
         back_populates="patent", cascade="all, delete-orphan"
     )
     drafts: Mapped[List["Draft"]] = relationship(
+        back_populates="patent", cascade="all, delete-orphan"
+    )
+    deadlines: Mapped[List["PatentDeadline"]] = relationship(
         back_populates="patent", cascade="all, delete-orphan"
     )
 

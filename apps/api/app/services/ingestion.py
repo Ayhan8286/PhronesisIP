@@ -252,40 +252,56 @@ async def ingest_patent_from_external(
     db: AsyncSession,
 ) -> Patent:
     """
-    Import a patent from external source (Google Patents / USPTO ODP).
-    Creates patent record + claims + generates embeddings from abstract.
+    Import a patent from external source with DEEP FETCHING.
+    Fulfills 'fetch all 115 pages' and 'invalid patent number' requirements.
     """
-    # Check if already exists
+    from app.services.patent_fetcher import patent_fetcher
+    
+    pat_num = patent_data.get("patent_number", "")
+    
+    # 1. Deep Fetch Full Text (Scraping + Cache)
+    # This retrieves 100+ pages of description and all claims
+    deep_data = await patent_fetcher.fetch_full_patent(pat_num, db)
+    
+    if "error" in deep_data:
+        # Fulfills 'US 99999999 — must show Patent not found'
+        raise HTTPException(status_code=404, detail=deep_data["error"])
+
+    # 2. Check if already exists for this firm
     existing = await db.execute(
-        text("SELECT id FROM patents WHERE firm_id = :fid AND patent_number = :pn"),
-        {"fid": str(firm_id), "pn": patent_data.get("patent_number", "")},
+        select(Patent.id).where(
+            Patent.firm_id == firm_id, 
+            Patent.patent_number == pat_num,
+            Patent.deleted_at.is_(None)
+        )
     )
     if existing.first():
-        raise ValueError("Patent already exists in your portfolio")
+        raise HTTPException(status_code=400, detail="Patent already exists in your portfolio")
 
-    # Create patent record
+    # 3. Create patent record with deep text
     patent = Patent(
         firm_id=firm_id,
-        application_number=patent_data.get("patent_number", "").replace("US ", ""),
-        patent_number=patent_data.get("patent_number", ""),
-        title=patent_data.get("title", "Untitled"),
-        abstract=patent_data.get("abstract", ""),
-        status="granted" if patent_data.get("grant_date") else "pending",
-        grant_date=patent_data.get("grant_date") if patent_data.get("grant_date") else None,
+        application_number=pat_num.replace("US ", "").replace(" ", ""),
+        patent_number=pat_num,
+        title=deep_data.get("title", patent_data.get("title", "Untitled")),
+        abstract=deep_data.get("abstract", patent_data.get("abstract", "")),
+        full_description=deep_data.get("description"),
+        status="granted" if "US" in pat_num and not pat_num.endswith("A1") else "pending",
         inventors=patent_data.get("inventors", []),
         assignee=patent_data.get("assignee", ""),
+        priority_date=deep_data.get("priority_date"),
         patent_metadata={
-            "source": patent_data.get("source", "external"),
-            "import_date": str(uuid.uuid4())[:10],
-            "num_claims": patent_data.get("num_claims", 0),
+            "source": "google_patents_deep",
+            "import_date": datetime.now().isoformat(),
+            "has_full_text": True,
         },
     )
     db.add(patent)
     await db.flush()
     await db.refresh(patent)
 
-    # Import claims
-    for claim_data in patent_data.get("claims", []):
+    # 4. Import claims
+    for claim_data in deep_data.get("claims", []):
         claim = PatentClaim(
             patent_id=patent.id,
             claim_number=claim_data.get("number", 0),

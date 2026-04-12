@@ -11,7 +11,8 @@ from app.config import settings
 from app.database import engine, Base
 from app.routers import (
     auth, patents, portfolio, drafting,
-    office_actions, prior_art, search, documents, usage, export, diagnostic
+    office_actions, prior_art, search, documents, usage, export, diagnostic,
+    analysis
 )
 from app.auth import get_current_user, get_dev_user
 
@@ -109,7 +110,7 @@ async def health_check():
 
 # Register routers
 app.include_router(patents.router, prefix="/api/v1/patents", tags=["Patents"])
-app.include_router(portfolio.router, prefix="/api/v1/portfolio", tags=["Portfolio"])
+app.include_router(portfolio.router, prefix="/api/v1/portfolio", tags=["Portfolio Management"])
 app.include_router(drafting.router, prefix="/api/v1/drafting", tags=["Patent Drafting"])
 app.include_router(
     office_actions.router, prefix="/api/v1/office-actions", tags=["Office Actions"]
@@ -120,18 +121,25 @@ app.include_router(documents.router, prefix="/api/v1/documents", tags=["Document
 app.include_router(export.router, prefix="/api/v1/export", tags=["Export"])
 app.include_router(usage.router, prefix="/api/v1/usage", tags=["Usage"])
 app.include_router(auth.router, prefix="/api/v1/auth", tags=["Auth"])
+app.include_router(analysis.router, prefix="/api/v1/analysis", tags=["Legal Analysis"])
 
 if settings.APP_ENV == "development":
     app.include_router(diagnostic.router, prefix="/api/v1/diagnostic", tags=["Diagnostic"])
 
 # Register Inngest endpoint
 import inngest.fast_api
-from app.services.inngest_client import inngest_client
-from app.services.inngest_jobs import process_large_patent, process_oa_references, sync_uspto_statuses
+from app.services.inngest_jobs import (
+    process_large_patent, process_oa_references, sync_uspto_statuses,
+    daily_portfolio_sync, run_legal_analysis
+)
 
 inngest.fast_api.serve(
     app,
     inngest_client,
-    [process_large_patent, process_oa_references, sync_uspto_statuses],
+    [
+        process_large_patent, process_oa_references, sync_uspto_statuses,
+        daily_portfolio_sync, run_legal_analysis,
+        run_portfolio_audit, run_patent_dd_check, check_and_generate_final_report
+    ],
     serve_path="/api/inngest"
 )

@@ -14,6 +14,8 @@ class PatentBase(BaseModel):
     inventors: Optional[List[dict]] = []
     assignee: Optional[str] = None
     classification: Optional[dict] = {}
+    ownership_type: str = "OWNED"
+    license_expiry: Optional[date] = None
 
 class PatentCreate(PatentBase):
     family_id: Optional[uuid.UUID] = None
@@ -24,6 +26,8 @@ class PatentUpdate(BaseModel):
     status: Optional[str] = None
     grant_date: Optional[date] = None
     assignee: Optional[str] = None
+    ownership_type: Optional[str] = None
+    license_expiry: Optional[date] = None
     family_id: Optional[uuid.UUID] = None
 
 class PatentResponse(PatentBase):

@@ -6,7 +6,10 @@ from app.models.prior_art import PriorArtReference
 from app.models.reference_cache import PublicPatentCache
 from app.models.draft import Draft
 from app.models.embeddings import PatentEmbedding, ClaimEmbedding
-from app.models.audit import AuditLog, UsageLog
+from app.models.deadline import PatentDeadline
+from app.models.audit import AuditLog, UsageLog, SearchHistory
+from app.models.analysis import AnalysisWorkflow, ProductDescription, ClaimAnalysisResult
+from app.models.portfolio import Client, Portfolio, PortfolioPatent
 
 __all__ = [
     "Base",
@@ -15,6 +18,7 @@ __all__ = [
     "Patent",
     "PatentClaim",
     "PatentFamily",
+    "PatentDeadline",
     "OfficeAction",
     "OAResponseDraft",
     "PriorArtReference",
@@ -24,4 +28,11 @@ __all__ = [
     "ClaimEmbedding",
     "AuditLog",
     "UsageLog",
+    "SearchHistory",
+    "AnalysisWorkflow",
+    "ProductDescription",
+    "ClaimAnalysisResult",
+    "Client",
+    "Portfolio",
+    "PortfolioPatent",
 ]

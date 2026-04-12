@@ -84,10 +84,10 @@ export default function AdminDashboard() {
       if (!token) throw new Error("No authentication token");
 
       const [healthRes, econRes, incRes, failRes] = await Promise.all([
-        apiFetch<HealthData>("/api/v1/admin/health", { token }),
-        apiFetch<EconomicData>("/api/v1/admin/economics", { token }),
-        apiFetch<Incident[]>("/api/v1/admin/incidents", { token }),
-        apiFetch<FailedWorkflow[]>("/api/v1/admin/monitoring/failed-workflows", { token })
+        apiFetch<HealthData>("/api/v1/admin/health", { token: token ?? undefined }),
+        apiFetch<EconomicData>("/api/v1/admin/economics", { token: token ?? undefined }),
+        apiFetch<Incident[]>("/api/v1/admin/incidents", { token: token ?? undefined }),
+        apiFetch<FailedWorkflow[]>("/api/v1/admin/monitoring/failed-workflows", { token: token ?? undefined })
       ]);
 
       setHealth(healthRes);
@@ -108,10 +108,10 @@ export default function AdminDashboard() {
       const token = await getToken();
       await apiFetch(`/api/v1/admin/workflows/${id}/retry`, { 
         method: "POST",
-        token 
+        token: token ?? undefined
       });
       // Refresh failed workflows list
-      const failRes = await apiFetch<FailedWorkflow[]>("/api/v1/admin/monitoring/failed-workflows", { token });
+      const failRes = await apiFetch<FailedWorkflow[]>("/api/v1/admin/monitoring/failed-workflows", { token: token ?? undefined });
       setFailedWorkflows(failRes);
     } catch (err: any) {
       alert(`Retry failed: ${err.message}`);
@@ -128,14 +128,14 @@ export default function AdminDashboard() {
 
   if (loading && !health) {
     return (
-      <div className="flex items-center justify-center min-vh-100 bg-[#0a0a0f] text-white">
+      <div className="flex items-center justify-center min-h-[400px] text-white">
         <RefreshCw className="w-8 h-8 animate-spin text-indigo-500" />
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-[#0a0a0f] text-slate-200 p-8 font-sans">
+    <div className="page-content bg-[#0a0a0f] text-slate-200 p-8 font-sans">
       {/* Header */}
       <header className="flex justify-between items-center mb-10">
         <div>
@@ -151,7 +151,7 @@ export default function AdminDashboard() {
           <div className="px-4 py-2 bg-[#111118] rounded-full border border-slate-800 flex items-center gap-3">
             <div className={`w-2 h-2 rounded-full animate-pulse ${health?.status === 'healthy' ? 'bg-emerald-500' : 'bg-amber-500'}`} />
             <span className="text-xs font-semibold uppercase tracking-wider">
-              {health?.status === 'healthy' ? 'Platform Nominated' : 'Action Required'}
+              {health?.status === 'healthy' ? 'Platform Normal' : 'Action Required'}
             </span>
           </div>
           <button 

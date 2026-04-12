@@ -3,8 +3,9 @@ Semantic + keyword hybrid search across local patents AND external USPTO search.
 """
 
 import hashlib
+import uuid
 from typing import List, Optional, Dict
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy import select, text, func

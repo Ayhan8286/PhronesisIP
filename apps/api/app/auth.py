@@ -78,6 +78,9 @@ async def get_current_user(
     org_role = payload.get("org_role", "org:member")
     email = payload.get("email", "")
 
+    # DIAGNOSTIC: Log the payload to see what's actually coming from Clerk
+    print(f"DEBUG: Auth Payload - User: {clerk_user_id}, Org: {clerk_org_id}, Email: {email}")
+
     if not clerk_user_id:
         raise HTTPException(status_code=401, detail="Missing user ID in token")
 

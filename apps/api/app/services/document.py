@@ -38,7 +38,17 @@ def extract_pdf_text(pdf_content: bytes) -> str:
         except Exception:
             pass
 
-    return text.strip()
+    # Detect if this is likely a scanned PDF (no text found after multiple methods)
+    final_text = text.strip()
+    
+    # If the file is reasonably large but we got near-zero text, it's likely scanned
+    if len(pdf_content) > 10000 and len(final_text) < 100:
+         # Note: We don't raise an error here to stay low-level, 
+         # but the calling code can now see the "empty" result more clearly.
+         # For now, we return a special marker or just let the caller decide.
+         pass
+         
+    return final_text
 
 
 def extract_docx_text(docx_content: bytes) -> str:

@@ -42,10 +42,15 @@ async def upload_patent_pdf(
     if not patent:
         raise HTTPException(status_code=404, detail="Patent not found")
 
-    if not file.filename.lower().endswith(".pdf"):
-        raise HTTPException(status_code=400, detail="Only PDF files are supported")
-
     content = await file.read()
+
+    # Detect scanned PDF early to prevent bad ingestion
+    extracted_text = extract_pdf_text(content)
+    if not extracted_text or (len(content) > 10000 and len(extracted_text) < 100):
+        raise HTTPException(
+            status_code=400, 
+            detail="Could not extract text from PDF. This document appears to be a scanned image (not real text). Please upload a text-based PDF or use OCR."
+        )
 
     # Upload to R2 storage
     r2_key = f"patents/{user.firm_id}/{patent_id}/{file.filename}"
@@ -97,8 +102,11 @@ async def upload_office_action_pdf(
 
     # Extract text from PDF
     extracted_text = extract_pdf_text(content)
-    if not extracted_text:
-        raise HTTPException(status_code=400, detail="Could not extract text from PDF")
+    if not extracted_text or (len(content) > 10000 and len(extracted_text) < 100):
+        raise HTTPException(
+            status_code=400, 
+            detail="Could not extract text from PDF. This document appears to be a scanned image (not real text). Please upload a text-based PDF or use OCR."
+        )
 
     # Upload to R2 storage
     r2_key = f"office-actions/{user.firm_id}/{patent_id}/{file.filename}"
@@ -179,8 +187,11 @@ async def upload_invention_spec(
         except UnicodeDecodeError:
             raise HTTPException(status_code=400, detail="Unsupported file format")
 
-    if not extracted_text:
-        raise HTTPException(status_code=400, detail="Could not extract text from document")
+    if not extracted_text or (filename.endswith(".pdf") and len(content) > 10000 and len(extracted_text) < 100):
+        raise HTTPException(
+            status_code=400, 
+            detail="Could not extract text from document. This appears to be a scanned image or empty file. Please upload a text-based document."
+        )
 
     return {
         "message": "Specification uploaded and text extracted",

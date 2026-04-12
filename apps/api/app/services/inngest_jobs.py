@@ -623,4 +623,28 @@ async def check_and_generate_final_report(ctx: inngest.Context, step: inngest.St
             return key
 
     report_key = await step.run("generate_final_report", generate_pdf)
-    return {"status": "completed", "report": report_key}
+    return {"status": "completed", "report": report_key}@inngest_client.create_function(
+    fn_id="platform_uptime_watchdog",
+    trigger=inngest.TriggerCron(cron="*/5 * * * *"), # Every 5 minutes
+)
+async def platform_uptime_watchdog(ctx: inngest.Context):
+    """
+    Automated health watchdog to ensure 'It should not be down'.
+    Pings critical infrastructure and alerts on failure.
+    """
+    from app.services.alerts import alert_service
+    from app.database import engine
+    from sqlalchemy import text
+    
+    try:
+        # 1. Check DB Connectivity
+        async with engine.connect() as conn:
+            await conn.execute(text("SELECT 1"))
+        
+        # 2. Check Inngest Context (implicit if we are running)
+        return {"status": "ok", "message": "System verified healthy"}
+        
+    except Exception as e:
+        detail = f"Database connectivity failed during watchdog ping: {str(e)}"
+        await alert_service.dispatch_outage_alert(detail)
+        return {"status": "critical", "error": str(e)}

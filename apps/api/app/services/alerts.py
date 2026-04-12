@@ -2,7 +2,8 @@ import uuid
 from datetime import date, datetime
 from sqlalchemy import select, and_, or_
 from sqlalchemy.ext.asyncio import AsyncSession
-from app.models import PatentDeadline, Patent, User
+from app.models import PatentDeadline, Patent, User, SystemIncident
+from app.database import async_session_factory
 from app.utils.logging import get_base_logger
 
 logger = get_base_logger(__name__)
@@ -73,6 +74,33 @@ class AlertService:
         # For now, we log it forensically.
         logger.info(f"MOCK_EMAIL_SEND | To: Firm {deadline.firm_id} | Subject: {subject}")
         print(f"--- MOCK EMAIL SENT ---\nSubject: {subject}\nTo: {deadline.firm_id}\n{message}\n----------------------")
+
+    async def dispatch_outage_alert(self, detail: str):
+        """
+        Sends an emergency alert when the platform detects internal degradation.
+        Fulfills 'It should not be down' monitoring requirements.
+        Persists the incident to the DB so it appears on the admin dashboard.
+        """
+        subject = "🚨 CRITICAL: PhronesisIP Platform Degradation Detected"
+        msg = f"Platform Watchdog Alert\nTimestamp: {datetime.now().isoformat()}\nDetail: {detail}"
+        
+        # 1. Forensic Logging
+        logger.critical(f"PLATFORM_OUTAGE_ALERT | {detail}")
+
+        # 2. Persist to Dashboard
+        if async_session_factory:
+            async with async_session_factory() as db:
+                incident = SystemIncident(
+                    level="critical",
+                    source="watchdog",
+                    message="Platform Health Check Failed",
+                    details=detail
+                )
+                db.add(incident)
+                await db.commit()
+
+        # 3. Dispatch "Gmail" (Mock)
+        print(f"--- OUTAGE GMAIL DISPATCHED to admin@phronesisip.com ---\nSubject: {subject}\n{msg}\n----------------------------")
 
 from dateutil.relativedelta import relativedelta
 alert_service = AlertService()

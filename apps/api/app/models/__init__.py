@@ -10,6 +10,7 @@ from app.models.deadline import PatentDeadline
 from app.models.audit import AuditLog, UsageLog, SearchHistory
 from app.models.analysis import AnalysisWorkflow, ProductDescription, ClaimAnalysisResult
 from app.models.portfolio import Client, Portfolio, PortfolioPatent
+from app.models.incident import SystemIncident
 
 __all__ = [
     "Base",
@@ -35,4 +36,5 @@ __all__ = [
     "Client",
     "Portfolio",
     "PortfolioPatent",
+    "SystemIncident",
 ]

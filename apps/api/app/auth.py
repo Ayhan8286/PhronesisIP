@@ -32,6 +32,7 @@ class CurrentUser:
     clerk_user_id: str
     email: str
     role: str
+    is_system_admin: bool = False
     firm_id: Optional[uuid.UUID] = None
     clerk_org_id: Optional[str] = None
 
@@ -100,11 +101,17 @@ async def get_current_user(
     if clerk_org_id:
         firm_id = uuid.uuid5(uuid.NAMESPACE_URL, f"firm:{clerk_org_id}")
 
+    # Check if user is a System Admin (Platform Level)
+    is_sys_admin = False
+    if settings.SYSTEM_ADMIN_ORG_ID and clerk_org_id == settings.SYSTEM_ADMIN_ORG_ID:
+        is_sys_admin = True
+
     return CurrentUser(
         id=user_id,
         clerk_user_id=clerk_user_id,
         email=email,
         role=role,
+        is_system_admin=is_sys_admin,
         firm_id=firm_id,
         clerk_org_id=clerk_org_id,
     )
@@ -124,6 +131,20 @@ async def get_active_firm_user(
     return user
 
 
+async def get_system_admin(
+    user: CurrentUser = Depends(get_current_user),
+) -> CurrentUser:
+    """
+    Strict dependency for routes that REQUIRE platform-wide administration rights.
+    """
+    if not user.is_system_admin:
+        raise HTTPException(
+            status_code=403,
+            detail="Forbidden: Administrative access required.",
+        )
+    return user
+
+
 # Development bypass for testing without Clerk
 class DevUser(CurrentUser):
     """A test user for development without Clerk."""
@@ -139,4 +160,5 @@ def get_dev_user() -> CurrentUser:
         clerk_org_id="org_dev",
         email="dev@patentiq.com",
         role="admin",
+        is_system_admin=True,
     )

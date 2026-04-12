@@ -38,6 +38,7 @@ class Settings(BaseSettings):
     # Set these via environment variables on your deployment.
     CLERK_JWKS_URL: str = ""
     CLERK_ISSUER: str = ""
+    SYSTEM_ADMIN_ORG_ID: str = ""  # The Clerk Org ID for PhronesisIP internal management
 
     # --- AI / Embeddings ---
     VOYAGE_API_KEY: str = ""

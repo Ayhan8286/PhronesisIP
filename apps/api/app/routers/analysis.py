@@ -1,4 +1,5 @@
 import uuid
+import inngest
 from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select
@@ -126,4 +127,3 @@ async def get_analysis_report(
     url = await get_presigned_url(workflow.report_r2_key, expires_in=900)
     return {"download_url": url}
 
-import inngest

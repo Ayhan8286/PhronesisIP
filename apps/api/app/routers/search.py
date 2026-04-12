@@ -3,6 +3,7 @@ Semantic + keyword hybrid search across local patents AND external USPTO search.
 """
 
 import hashlib
+from typing import List, Optional, Dict
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel

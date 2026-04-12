@@ -293,20 +293,38 @@ export default function OfficeActionsPage() {
                           {generatingFor === oa.id ? "⚡ Generating Response..." : "✅ AI-Generated Response"}
                         </div>
                         {generatingFor !== oa.id && (
-                          <button 
-                            className="btn btn-secondary btn-sm"
-                            onClick={() => {
-                              const blob = new Blob([responseText], { type: "application/msword" });
-                              const url = URL.createObjectURL(blob);
-                              const a = document.createElement("a");
-                              a.href = url;
-                              a.download = `Office_Action_Response_${oa.action_type}.doc`;
-                              a.click();
-                              URL.revokeObjectURL(url);
-                            }}
-                          >
-                            Download Word (.doc)
-                          </button>
+                          <div style={{ display: "flex", gap: 8 }}>
+                            <button
+                              className="btn btn-primary btn-sm"
+                              onClick={async () => {
+                                try {
+                                  const blob = await api.exportOAResponse(oa.id, responseText);
+                                  const url = window.URL.createObjectURL(blob);
+                                  const a = document.createElement("a");
+                                  a.href = url;
+                                  a.download = `USPTO_Response_${oa.id}.docx`;
+                                  a.click();
+                                } catch (err) {
+                                  alert("Export failed. Please try again.");
+                                }
+                              }}
+                            >
+                              Export DOCX
+                            </button>
+                            <button
+                              className="btn btn-secondary btn-sm"
+                              onClick={async () => {
+                                try {
+                                  await api.saveOAResponseDraft(oa.id, responseText);
+                                  alert("Draft saved successfully!");
+                                } catch (err) {
+                                  alert("Failed to save draft.");
+                                }
+                              }}
+                            >
+                              Save Draft
+                            </button>
+                          </div>
                         )}
                       </div>
                       <textarea

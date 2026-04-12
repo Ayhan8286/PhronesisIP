@@ -385,6 +385,27 @@ export const createApi = (token?: string) => ({
 
   generateDueDiligence: (body: object, onChunk: (t: string) => void, onDone?: () => void) =>
     apiStream("/api/v1/prior-art/due-diligence", body, onChunk, onDone, token),
+
+  exportOAResponse: async (oaId: string, draftText: string) => {
+    const url = `${API_URL}/api/v1/export/office-action/${oaId}`;
+    const res = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      body: JSON.stringify({ draft_text: draftText }),
+    });
+    if (!res.ok) throw new Error("Export failed");
+    return res.blob();
+  },
+
+  saveOAResponseDraft: async (oaId: string, draftContent: string) =>
+    apiFetch<Draft>(`/api/v1/office-actions/${oaId}/drafts`, {
+      method: "POST",
+      body: JSON.stringify({ draft_content: draftContent }),
+      token,
+    }),
 });
 
 // Original api object kept for compatibility with any existing static imports, but empty/null token

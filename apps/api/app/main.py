@@ -10,8 +10,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.config import settings
 from app.database import engine, Base
 from app.routers import (
-    patents, portfolio, drafting, office_actions, 
-    prior_art, search, documents, diagnostic
+    auth, patents, portfolio, drafting,
+    office_actions, prior_art, search, documents, usage, export, diagnostic
 )
 from app.auth import get_current_user, get_dev_user
 
@@ -117,6 +117,9 @@ app.include_router(
 app.include_router(prior_art.router, prefix="/api/v1/prior-art", tags=["Prior Art & Analysis"])
 app.include_router(search.router, prefix="/api/v1/search", tags=["Search"])
 app.include_router(documents.router, prefix="/api/v1/documents", tags=["Documents"])
+app.include_router(export.router, prefix="/api/v1/export", tags=["Export"])
+app.include_router(usage.router, prefix="/api/v1/usage", tags=["Usage"])
+app.include_router(auth.router, prefix="/api/v1/auth", tags=["Auth"])
 
 if settings.APP_ENV == "development":
     app.include_router(diagnostic.router, prefix="/api/v1/diagnostic", tags=["Diagnostic"])

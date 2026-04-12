@@ -31,6 +31,10 @@ async def upload_patent_pdf(
     Upload a patent PDF → extract text → chunk → embed → generate AI summary.
     This is the core ingestion pipeline.
     """
+    # Verify file is not empty
+    if file.size == 0:
+        raise HTTPException(status_code=400, detail="The uploaded file is empty.")
+
     # Verify patent belongs to user's firm
     result = await db.execute(
         select(Patent).where(
@@ -87,6 +91,10 @@ async def upload_office_action_pdf(
     """
     Upload an office action PDF → extract text → AI-parse rejections → create OA record.
     """
+    # Verify file is not empty
+    if file.size == 0:
+        raise HTTPException(status_code=400, detail="The uploaded file is empty.")
+
     # Verify patent belongs to firm
     result = await db.execute(
         select(Patent).where(
@@ -116,7 +124,9 @@ async def upload_office_action_pdf(
         r2_key = None
 
     # AI-parse rejections from the extracted text
-    rejections = await _parse_rejections_ai(extracted_text)
+    ai_data = await _parse_rejections_ai(extracted_text)
+    rejections = ai_data.get("rejections", [])
+    oa_metadata = ai_data.get("metadata", {})
 
     from datetime import date
     from dateutil.relativedelta import relativedelta
@@ -128,14 +138,19 @@ async def upload_office_action_pdf(
     # Create office action record
     oa = OfficeAction(
         patent_id=uuid.UUID(patent_id),
+        firm_id=user.firm_id,
         action_type=action_type,
         r2_file_key=r2_key,
         extracted_text=extracted_text,
-        rejections=rejections,
+        rejections=rejections, # Still storing rejections for compatibility
         mailing_date=today,
         response_deadline=calculated_deadline,
         status="pending",
     )
+    # Store extended metadata if needed (could be added to a new column or JSONB field)
+    # For now, let's keep it in the rejections JSONB as an alternative structure if we want
+    # but I'll stick to a list for 'rejections' and maybe add a migration later.
+    # Actually, let's just use rejections for now and return it to UI.
     db.add(oa)
     await db.flush()
     await db.refresh(oa)
@@ -172,6 +187,10 @@ async def upload_invention_spec(
     Supports PDF and DOCX formats.
     Returns extracted text that can be passed to the drafting endpoint.
     """
+    # Verify file is not empty
+    if file.size == 0:
+        raise HTTPException(status_code=400, detail="The uploaded file is empty.")
+
     content = await file.read()
     filename = file.filename.lower() if file.filename else ""
     
@@ -242,10 +261,10 @@ async def get_patent_summary(
     }
 
 
-async def _parse_rejections_ai(office_action_text: str) -> list:
+async def _parse_rejections_ai(office_action_text: str) -> dict:
     """
-    Use AI to parse rejection details from an office action text.
-    Identifies rejection type, cited references, and affected claims.
+    Use AI to parse rejection details and metadata from an office action text.
+    Identifies rejection type, cited references, affected claims, plus Art Unit and Examiner.
     """
     import json
 
@@ -255,24 +274,25 @@ async def _parse_rejections_ai(office_action_text: str) -> list:
 
         llm = await _get_llm(temperature=0.1)
 
-        prompt = f"""Parse this USPTO office action text and extract ALL rejections.
-
-OFFICE ACTION TEXT:
-{office_action_text[:6000]}
-
-Return a JSON array of rejections. Each rejection should have:
-- "type": The statutory basis (e.g., "102", "103", "112", "101")
-- "claims": Array of claim numbers affected
-- "references": Array of cited prior art references (patent numbers and names)
-- "basis": Brief description of the rejection basis
-
-Example:
-[
-    {{"type": "103", "claims": [1, 2, 3], "references": ["Smith US 10,111,222", "Jones US 10,333,444"], "basis": "Obvious combination of Smith and Jones"}},
-    {{"type": "112", "claims": [5, 6], "references": [], "basis": "Indefinite claim language"}}
-]
-
-Return ONLY a valid JSON array."""
+        prompt = f"""Parse this USPTO office action text and extract ALL rejections and key header metadata.
+ 
+ OFFICE ACTION TEXT:
+ {office_action_text[:6000]}
+ 
+ Return a JSON object with:
+ 1. "metadata": {{
+     "art_unit": "The USPTO Art Unit (e.g., 3622)",
+     "examiner": "The name of the Examiner",
+     "docket_number": "The Attorney Docket Number if found",
+     "application_number": "The Application Number if found"
+    }}
+ 2. "rejections": A JSON array where each rejection has:
+     - "type": The statutory basis (e.g., "102", "103", "112", "101")
+     - "claims": Array of claim numbers affected
+     - "references": Array of cited prior art references (patent numbers and names)
+     - "basis": Brief description of the rejection basis
+ 
+ Return ONLY a valid JSON object."""
 
         result = await llm.ainvoke([HumanMessage(content=prompt)])
         text = result.content.strip()
@@ -284,7 +304,7 @@ Return ONLY a valid JSON array."""
 
         return json.loads(text)
     except Exception:
-        return []
+        return {"rejections": [], "metadata": {}}
 
 @router.get("/{patent_id}/view-url")
 @audit_log(action="VIEW_DOCUMENT", target_type="patent")

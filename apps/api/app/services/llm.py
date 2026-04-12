@@ -154,6 +154,7 @@ Guidelines:
 - Use proper antecedent basis throughout
 - Include at least 3 independent claims and 10+ dependent claims
 - The specification must enable a person skilled in the art to practice the invention
+- LEGAL SAFETY: NEVER concede that any claim features are already known in the prior art or that the invention is obvious. Maintain a strategically novel and non-obvious stance throughout.
 """
 
 
@@ -235,6 +236,7 @@ Format the response as a formal Office Action Response with:
 - Remarks section addressing each rejection
 - Claim amendments (if applicable)
 - Conclusion requesting allowance
+- LEGAL SAFETY: NEVER concede infringement, acknowledge validity of prior art for the purpose of anticipation/obviousness, or make any admissions that could be used against the applicant in litigation. Focus exclusively on distinguishing the technical features and legal arguments for non-obviousness.
 """
 
 

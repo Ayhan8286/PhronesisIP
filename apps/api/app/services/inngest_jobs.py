@@ -138,7 +138,7 @@ async def process_large_patent(ctx: inngest.Context, step: inngest.Step) -> dict
 @inngest_client.create_function(
     fn_id="process_oa_references",
     trigger=inngest.TriggerEvent(event="oa.references.fetch"),
-    retries=2,
+    retries=5, # Increased for USPTO API flakiness
 )
 async def process_oa_references(ctx: inngest.Context, step: inngest.Step) -> dict:
     """

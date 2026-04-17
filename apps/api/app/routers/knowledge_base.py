@@ -193,12 +193,18 @@ async def upload_legal_source(
             raise ValueError(ingestion_result["error"])
 
     except Exception as e:
-        # If ingestion fails (e.g., Voyage RateLimitError, OOM, etc), delete the source record
-        await db.execute(text("DELETE FROM legal_sources WHERE id = :sid"), {"sid": str(source.id)})
-        await db.commit()
+        # If ingestion fails (e.g., Voyage RateLimitError, OOM, etc), delete the source record cleanly
+        await db.rollback()
+        try:
+            # We must use a new transaction or the raw delete if we've rolled back
+            await db.execute(text("DELETE FROM legal_sources WHERE id = :sid"), {"sid": str(source.id)})
+            await db.commit()
+        except:
+            await db.rollback()
+
         error_msg = str(e)
-        if "RateLimitError" in error_msg or "rate limit" in error_msg.lower() or "payment method" in error_msg.lower():
-            raise HTTPException(status_code=429, detail="Voyage AI Rate Limit Exceeded: Free tier limited to 10K tokens/min. Please add a payment method to Voyage AI or upload a smaller file.")
+        if "RateLimitError" in error_msg or "rate limit" in error_msg.lower() or "payment method" in error_msg.lower() or "10K TPM" in error_msg:
+            raise HTTPException(status_code=429, detail="Voyage AI limits Free Tier testing to 3 uploads per minute and 10k tokens. Only 1 document per minute is allowed in Dev Mode.")
         raise HTTPException(status_code=400, detail=f"Ingestion failed: {error_msg}")
 
     return {

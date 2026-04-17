@@ -14,27 +14,26 @@ def extract_pdf_text(pdf_content: bytes) -> str:
     """
     text = ""
 
-    # Try pdfplumber first (better for text-based PDFs)
+    # Try PyMuPDF first (vastly more memory efficient for massive legal docs like MPEP)
     try:
-        import pdfplumber
-
-        with pdfplumber.open(io.BytesIO(pdf_content)) as pdf:
-            for page in pdf.pages:
-                page_text = page.extract_text()
+        import fitz  # PyMuPDF
+        with fitz.open(stream=pdf_content, filetype="pdf") as doc:
+            for page in doc:
+                page_text = page.get_text()
                 if page_text:
                     text += page_text + "\n\n"
     except Exception:
         pass
 
-    # If pdfplumber got no text, try PyMuPDF
+    # If PyMuPDF got no text, fallback to pdfplumber (better layout analysis but memory hungry)
     if not text.strip():
         try:
-            import fitz  # PyMuPDF
-
-            doc = fitz.open(stream=pdf_content, filetype="pdf")
-            for page in doc:
-                text += page.get_text() + "\n\n"
-            doc.close()
+            import pdfplumber
+            with pdfplumber.open(io.BytesIO(pdf_content)) as pdf:
+                for page in pdf.pages:
+                    page_text = page.extract_text()
+                    if page_text:
+                        text += page_text + "\n\n"
         except Exception:
             pass
 

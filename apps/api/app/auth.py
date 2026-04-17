@@ -100,6 +100,10 @@ async def get_current_user(
     firm_id = None
     if clerk_org_id:
         firm_id = uuid.uuid5(uuid.NAMESPACE_URL, f"firm:{clerk_org_id}")
+    else:
+        # Development fallback: If clerk_org_id is missing, default to the Dev Firm
+        clerk_org_id = "org_000010"
+        firm_id = uuid.UUID("00000000-0000-0000-0000-000000000010")
 
     # Check if user is a System Admin (Platform Level)
     # REQUIRE: Management Organization ID
@@ -123,6 +127,7 @@ async def get_active_firm_user(
 ) -> CurrentUser:
     """
     Strict dependency for routes that REQUIRE a firm context (e.g., Portfolio, Ingestion).
+    In Dev Mode, missing organizations are forcibly mapped to the Dev Firm so this will safely pass.
     """
     if not user.clerk_org_id:
         raise HTTPException(

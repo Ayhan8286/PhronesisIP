@@ -63,7 +63,7 @@ ALTER TABLE legal_sources ENABLE ROW LEVEL SECURITY;
 CREATE POLICY legal_sources_isolation ON legal_sources
     USING (
         firm_id IS NULL
-        OR firm_id = current_setting('app.current_firm_id')::uuid
+        OR firm_id = current_setting('app.current_firm_id', true)::uuid
     );
 
 ALTER TABLE legal_source_chunks ENABLE ROW LEVEL SECURITY;
@@ -71,7 +71,7 @@ ALTER TABLE legal_source_chunks ENABLE ROW LEVEL SECURITY;
 CREATE POLICY legal_source_chunks_isolation ON legal_source_chunks
     USING (
         firm_id IS NULL
-        OR firm_id = current_setting('app.current_firm_id')::uuid
+        OR firm_id = current_setting('app.current_firm_id', true)::uuid
     );
 
 -- ==========================================================================

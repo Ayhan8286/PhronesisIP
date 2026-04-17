@@ -12,6 +12,7 @@ import {
 export default function DraftingPage() {
   const api = useApi();
   const [description, setDescription] = useState("");
+  const [jurisdiction, setJurisdiction] = useState("USPTO");
   const [techField, setTechField] = useState("");
   const [claimStyle, setClaimStyle] = useState("apparatus");
   const [specContext, setSpecContext] = useState("");
@@ -19,6 +20,7 @@ export default function DraftingPage() {
   const [generating, setGenerating] = useState(false);
   const [draftText, setDraftText] = useState("");
   const [drafts, setDrafts] = useState<Draft[]>([]);
+  const [trustPanel, setTrustPanel] = useState<any>(null);
   const [uploadingSpec, setUploadingSpec] = useState(false);
   const [specUploaded, setSpecUploaded] = useState(false);
 
@@ -48,6 +50,7 @@ export default function DraftingPage() {
     if (!description.trim()) return;
     setGenerating(true);
     setDraftText("");
+    setTrustPanel(null); // Reset trust panel on new run
 
     try {
       await api.generateDraft(
@@ -56,9 +59,20 @@ export default function DraftingPage() {
           technical_field: techField,
           claim_style: claimStyle,
           spec_context: specContext || undefined,
+          jurisdiction: jurisdiction, // Injects RAG Grounding
         },
         (chunk: string) => {
-          setDraftText((prev) => prev + chunk);
+          // If error stream payload arrives
+          if (chunk.includes('{"error"')) {
+            try {
+               const errPayload = JSON.parse(chunk);
+               if (errPayload.error) {
+                 setDraftText((prev) => prev + "\n[SYSTEM ERROR]: " + errPayload.error + "\n");
+               }
+            } catch {}
+          } else {
+             setDraftText((prev) => prev + chunk);
+          }
           if (outputRef.current) outputRef.current.scrollTop = outputRef.current.scrollHeight;
         },
         () => {
@@ -66,6 +80,10 @@ export default function DraftingPage() {
           // Refresh drafts list
           api.listDrafts().then(setDrafts).catch(console.error);
         },
+        (sourcesData: any) => {
+          // Bind strict RAG metadata directly to Trust Panel
+          setTrustPanel(sourcesData);
+        }
       );
     } catch (err: unknown) {
       alert(getErrorMessage(err));
@@ -119,7 +137,15 @@ export default function DraftingPage() {
                 />
               </div>
 
-              <div style={{ display: "flex", gap: 12, marginBottom: 12 }}>
+                <div style={{ display: "flex", gap: 12, marginBottom: 12 }}>
+                <div className="form-group" style={{ flex: 1, marginBottom: 0 }}>
+                  <label className="label">Jurisdiction (Legal Grounding)</label>
+                  <select className="input" value={jurisdiction} onChange={(e) => setJurisdiction(e.target.value)}>
+                    <option value="">None (Generic LLM)</option>
+                    <option value="USPTO">USPTO (Strict RAG)</option>
+                    <option value="EPO">EPO (Strict RAG)</option>
+                  </select>
+                </div>
                 <div className="form-group" style={{ flex: 2, marginBottom: 0 }}>
                   <label className="label">Technical Field</label>
                   <input className="input" placeholder="e.g. Machine Learning, Medical Devices" value={techField} onChange={(e) => setTechField(e.target.value)} />
@@ -156,6 +182,28 @@ export default function DraftingPage() {
             </div>
           </div>
         </div>
+
+        {/* TRUST PANEL (RAG Grounding Metadata) */}
+        {trustPanel && (
+          <div className="card" style={{ marginBottom: 24, padding: 16, borderLeft: "4px solid var(--success)", background: "rgba(16, 185, 129, 0.05)" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
+              <div style={{ width: 8, height: 8, borderRadius: 4, background: "var(--success)" }} />
+              <h4 style={{ margin: 0, fontSize: 14, fontWeight: 600, color: "var(--success)" }}>Strict {trustPanel.jurisdiction} Legal Grounding Active</h4>
+            </div>
+            <p style={{ fontSize: 13, color: "var(--text-secondary)", marginBottom: 8 }}>
+              This draft was generated using {trustPanel?.sources_used?.length || 0} legally validated chunks from your Knowledge Base.
+            </p>
+            {trustPanel?.sources_used?.length > 0 && (
+              <ul style={{ fontSize: 12, color: "var(--text-primary)", paddingLeft: 20, margin: 0 }}>
+                {trustPanel.sources_used.map((src: any, idx: number) => (
+                  <li key={idx} style={{ marginBottom: 4 }}>
+                    <strong>{src.source_title}</strong> {src.section ? `(${src.section})` : ""} - Relevance: {(src.score * 100).toFixed(1)}%
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        )}
 
         {/* Generated Draft Output */}
         {draftText && (

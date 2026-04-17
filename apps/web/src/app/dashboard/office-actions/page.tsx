@@ -28,6 +28,8 @@ export default function OfficeActionsPage() {
   // AI Response state
   const [generatingFor, setGeneratingFor] = useState<string | null>(null);
   const [responseText, setResponseText] = useState("");
+  const [jurisdiction, setJurisdiction] = useState("USPTO");
+  const [trustPanel, setTrustPanel] = useState<any>(null);
   const now = useMemo(() => Date.now(), []);
   const responseRef = useRef<HTMLTextAreaElement>(null);
 
@@ -70,16 +72,28 @@ export default function OfficeActionsPage() {
     setGeneratingFor(oa.id);
     setResponseText("");
     setExpandedOA(oa.id);
+    setTrustPanel(null); // reset trust panel
 
     try {
       await api.generateOAResponse(
         oa.id,
-        { response_strategy: "argue", additional_context: "" },
+        { response_strategy: "argue", additional_context: "", jurisdiction: jurisdiction },
         (chunk) => {
-          setResponseText((prev) => prev + chunk);
+          // If error stream payload arrives
+          if (chunk.includes('{"error"')) {
+            try {
+               const errPayload = JSON.parse(chunk);
+               if (errPayload.error) {
+                 setResponseText((prev) => prev + "\n[SYSTEM ERROR]: " + errPayload.error + "\n");
+               }
+            } catch {}
+          } else {
+             setResponseText((prev) => prev + chunk);
+          }
           if (responseRef.current) responseRef.current.scrollTop = responseRef.current.scrollHeight;
         },
         () => setGeneratingFor(null),
+        (sourcesData: any) => setTrustPanel(sourcesData)
       );
     } catch (err: unknown) {
       alert(getErrorMessage(err));
@@ -327,6 +341,29 @@ export default function OfficeActionsPage() {
                           </div>
                         )}
                       </div>
+
+                      {/* TRUST PANEL (RAG Grounding Metadata) */}
+                      {trustPanel && trustPanel.jurisdiction === jurisdiction && (
+                        <div style={{ marginBottom: 16, padding: 12, borderLeft: "4px solid var(--success)", background: "rgba(16, 185, 129, 0.05)", borderRadius: "0 var(--radius-sm) var(--radius-sm) 0" }}>
+                          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+                            <div style={{ width: 6, height: 6, borderRadius: 3, background: "var(--success)" }} />
+                            <h4 style={{ margin: 0, fontSize: 13, fontWeight: 600, color: "var(--success)" }}>Strict {trustPanel.jurisdiction} Legal Grounding Active</h4>
+                          </div>
+                          <p style={{ fontSize: 12, color: "var(--text-secondary)", marginBottom: 8, marginTop: 0 }}>
+                            Response grounded using {trustPanel?.sources_used?.length || 0} legally validated chunks.
+                          </p>
+                          {trustPanel?.sources_used?.length > 0 && (
+                            <ul style={{ fontSize: 12, color: "var(--text-primary)", paddingLeft: 16, margin: 0 }}>
+                              {trustPanel.sources_used.map((src: any, idx: number) => (
+                                <li key={idx} style={{ marginBottom: 2 }}>
+                                  <strong>{src.source_title}</strong> {src.section ? `(${src.section})` : ""} - Relevance: {(src.score * 100).toFixed(1)}%
+                                </li>
+                              ))}
+                            </ul>
+                          )}
+                        </div>
+                      )}
+
                       <textarea
                         ref={responseRef}
                         style={{

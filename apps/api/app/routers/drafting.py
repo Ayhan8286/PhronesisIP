@@ -164,36 +164,47 @@ async def generate_draft(
     async def wrapped_stream():
         full_response_parts = []
 
-        async for chunk in generate_patent_draft_stream(
-            invention_description=description,
-            technical_field=data.technical_field,
-            prior_art_context=data.prior_art_context,
-            claim_style=data.claim_style,
-            spec_context=data.spec_context,
-            firm_id=user.firm_id,
-            user_id=user.id,
-            jurisdiction=data.jurisdiction,
-            legal_context_text=legal_context_text,
-            patent_context_text=patent_context_text,
-            firm_name=firm_name,
-        ):
-            # Collect full response for citation validation
-            if chunk.startswith("data: ") and chunk.strip() not in ("data: [DONE]",):
-                full_response_parts.append(chunk[6:].strip())
-            yield chunk
+        try:
+            async for chunk in generate_patent_draft_stream(
+                invention_description=description,
+                technical_field=data.technical_field,
+                prior_art_context=data.prior_art_context,
+                claim_style=data.claim_style,
+                spec_context=data.spec_context,
+                firm_id=user.firm_id,
+                user_id=user.id,
+                jurisdiction=data.jurisdiction,
+                legal_context_text=legal_context_text,
+                patent_context_text=patent_context_text,
+                firm_name=firm_name,
+            ):
+                # Collect full response for citation validation
+                if chunk.startswith("data: ") and chunk.strip() not in ("data: [DONE]",):
+                    full_response_parts.append(chunk[6:].strip())
+                yield chunk
 
-        # After stream completes, send citation validation + sources metadata
-        if data.jurisdiction and sources_metadata:
-            full_text = "".join(full_response_parts)
-            validation = validate_citations(
-                full_text,
-                sources_metadata.get("sources_used", []),
-            )
-            sources_event = {
-                **sources_metadata,
-                "citation_validation": dict(validation),
-            }
-            yield f"data: [SOURCES]{json_lib.dumps(sources_event)}\n\n"
+            # After stream completes, send citation validation + sources metadata
+            if data.jurisdiction and sources_metadata:
+                full_text = "".join(full_response_parts)
+                validation = validate_citations(
+                    full_text,
+                    sources_metadata.get("sources_used", []),
+                )
+                sources_event = {
+                    **sources_metadata,
+                    "citation_validation": dict(validation),
+                }
+                yield f"data: [SOURCES]{json_lib.dumps(sources_event)}\n\n"
+        except Exception as e:
+            import logging
+            logging.error(f"Streaming Draft Error: {e}")
+            error_msg = str(e)
+            if "leaked" in error_msg.lower() or "403" in error_msg:
+                error_msg = "Your GEMINI_API_KEY was reported as publicly leaked and has been permanently disabled by Google. Please generate a fresh API key in Google AI Studio and update your environment variables."
+            
+            error_json = json_lib.dumps({"error": error_msg})
+            yield f"data: {error_json}\n\n"
+            yield "data: [DONE]\n\n"
 
     return StreamingResponse(
         wrapped_stream(),

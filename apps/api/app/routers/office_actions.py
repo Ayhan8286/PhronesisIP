@@ -248,6 +248,16 @@ async def generate_oa_response(
                     "citation_validation": dict(validation),
                 }
                 yield f"data: [SOURCES]{json_lib.dumps(sources_event)}\n\n"
+        except Exception as e:
+            import logging
+            logging.error(f"Streaming OA Draft Error: {e}")
+            error_msg = str(e)
+            if "leaked" in error_msg.lower() or "403" in error_msg:
+                error_msg = "Your GEMINI_API_KEY was reported as publicly leaked and has been permanently disabled by Google. Please generate a fresh API key in Google AI Studio and update your environment variables."
+            
+            error_json = json_lib.dumps({"error": error_msg})
+            yield f"data: {error_json}\n\n"
+            yield "data: [DONE]\n\n"
         finally:
             await cache_service.release_llm_semaphore()
 

@@ -141,27 +141,49 @@ async def upload_legal_source(
         except ValueError:
             raise HTTPException(status_code=400, detail="Invalid date format for source_updated_at")
 
+    # Safely verify user exists to prevent FK violation (500 error)
+    from sqlalchemy import text
+    try:
+        user_check = await db.execute(text("SELECT id FROM users WHERE id = :uid"), {"uid": str(user.id)})
+        db_user_id = user.id if user_check.scalar_one_or_none() else None
+    except Exception:
+        db_user_id = None
+
+    # Safely verify firm exists
+    db_firm_id = None
+    if firm_id:
+        try:
+            firm_check = await db.execute(text("SELECT id FROM firms WHERE id = :fid"), {"fid": str(firm_id)})
+            db_firm_id = firm_id if firm_check.scalar_one_or_none() else None
+        except Exception:
+            db_firm_id = None
+
     # Create the source record
     source = LegalSource(
-        firm_id=firm_id,
+        firm_id=db_firm_id,
         jurisdiction=jurisdiction,
         doc_type=doc_type,
         title=title,
         version=version,
         source_updated_at=parsed_date,
-        uploaded_by=user.id,
+        uploaded_by=db_user_id,
         is_active=True,
     )
-    db.add(source)
-    await db.flush()
-    await db.refresh(source)
+    
+    try:
+        db.add(source)
+        await db.flush()
+        await db.refresh(source)
+    except Exception as e:
+        await db.rollback()
+        raise HTTPException(status_code=500, detail=f"Database constraint error: {str(e)}")
 
     # Read PDF and run ingestion pipeline
     pdf_bytes = await file.read()
     ingestion_result = await ingest_legal_source(
         pdf_bytes=pdf_bytes,
         source_id=source.id,
-        firm_id=firm_id,
+        firm_id=db_firm_id,
         user_id=user.id,
         db=db,
     )

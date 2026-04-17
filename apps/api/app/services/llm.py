@@ -6,6 +6,9 @@ Produces STRUCTURED legal documents, not just free text.
 Includes:
 - Redis caching (48h TTL) — same query = instant response, no API cost
 - RAG context injection — Claude answers from retrieved pgvector chunks
+- STRICT RAG: when legal sources are provided, the LLM is forbidden
+  from using general training knowledge. Every legal claim must cite
+  a [Source: ...] from the uploaded Legal Knowledge Base.
 """
 
 import json
@@ -37,6 +40,95 @@ async def _get_llm(temperature: float = 0.3):
             temperature=temperature,
             streaming=True,
         )
+
+
+# ---------------------------------------------------------------------------
+# Legal Disclaimer (appended to every grounded generation)
+# ---------------------------------------------------------------------------
+
+LEGAL_DISCLAIMER = (
+    "\n\n---\n"
+    "*Generated using provided legal sources only. "
+    "This output requires attorney review before use. "
+    "PhronesisIP and Box Mation accept no legal liability "
+    "for outputs used without professional review.*"
+)
+
+
+# ---------------------------------------------------------------------------
+# Strict System Prompt Builder (core of grounded generation)
+# ---------------------------------------------------------------------------
+
+def build_strict_system_prompt(
+    workflow: str,
+    jurisdiction: str,
+    firm_name: str,
+    legal_context_text: str,
+    patent_context_text: str,
+    base_instructions: str = "",
+) -> str:
+    """
+    Build a system prompt that FORBIDS the LLM from using general training
+    knowledge. The LLM becomes a reasoning engine over provided sources ONLY.
+
+    This is the most critical function in the strict RAG pipeline.
+    """
+    return f"""You are a senior patent attorney assistant for {firm_name}.
+You are performing: {workflow}
+Jurisdiction: {jurisdiction}
+
+━━━━ STRICT OPERATING RULES ━━━━
+
+RULE 1 — USE ONLY THE PROVIDED SOURCES BELOW.
+You have been given two sets of information:
+  (A) Legal Authority: laws, rules, and guidelines
+  (B) Patent Context: the specific patent being worked on
+These are the ONLY sources you may use.
+Do NOT use your general training knowledge.
+Do NOT draw on information not present in these sources.
+Do NOT assume legal standards not stated in the provided text.
+
+RULE 2 — IF YOU DO NOT HAVE ENOUGH INFORMATION, SAY SO.
+If the provided sources do not contain enough information
+to answer accurately, respond with:
+"The provided legal sources do not contain sufficient
+information on this point. Please upload the relevant
+{jurisdiction} guidelines for [specific topic]."
+Do NOT guess. Do NOT fill gaps with general knowledge.
+
+RULE 3 — CITE EVERY LEGAL CLAIM YOU MAKE.
+Every legal statement in your output must include
+a citation in this format: [Source: {{title}}, {{section}}]
+where {{title}} is the document name and {{section}} is the
+specific section reference. If you cannot cite it, do not state it.
+
+RULE 4 — FOLLOW {jurisdiction} STANDARDS EXACTLY.
+Apply only the rules provided for {jurisdiction}.
+Do not mix rules from other jurisdictions.
+If {jurisdiction} rules are silent on something,
+state that they are silent — do not import rules
+from another jurisdiction to fill the gap.
+
+RULE 5 — FLAG UNCERTAINTY EXPLICITLY.
+If a legal point in the sources is ambiguous,
+write: [ATTORNEY REVIEW REQUIRED: {{reason}}]
+Do not resolve ambiguity yourself.
+
+{base_instructions}
+
+━━━━ LEGAL AUTHORITY PROVIDED ━━━━
+
+{legal_context_text if legal_context_text else
+"[WARNING: No legal sources found for this jurisdiction. "
+"Generation is proceeding without legal authority. "
+"Attorney must verify all outputs against applicable law.]"}
+
+━━━━ PATENT CONTEXT PROVIDED ━━━━
+
+{patent_context_text if patent_context_text else "[No patent context provided]"}
+
+━━━━ BEGIN TASK ━━━━
+"""
 
 
 # ---------------------------------------------------------------------------
@@ -166,8 +258,17 @@ async def generate_patent_draft_stream(
     prior_art_context: Optional[str] = None,
     claim_style: str = "apparatus",
     spec_context: Optional[str] = None,
+    # Strict RAG parameters
+    jurisdiction: Optional[str] = None,
+    legal_context_text: Optional[str] = None,
+    patent_context_text: Optional[str] = None,
+    firm_name: str = "the firm",
 ) -> AsyncGenerator[str, None]:
-    """Stream a patent application draft."""
+    """
+    Stream a patent application draft.
+    When jurisdiction + legal_context_text are provided, uses strict system prompt
+    that forbids the LLM from using general training knowledge.
+    """
     llm = await _get_llm()
 
     context_sections = ""
@@ -176,21 +277,32 @@ async def generate_patent_draft_stream(
     if spec_context:
         context_sections += f"\n\nEngineering Specification:\n{spec_context}"
 
-    prompt = f"""{PATENT_DRAFT_SYSTEM_PROMPT}
+    # Determine system prompt: strict (with legal sources) or original
+    if jurisdiction and legal_context_text is not None:
+        system_prompt = build_strict_system_prompt(
+            workflow="Patent Application Drafting",
+            jurisdiction=jurisdiction,
+            firm_name=firm_name,
+            legal_context_text=legal_context_text,
+            patent_context_text=patent_context_text or "",
+            base_instructions=PATENT_DRAFT_SYSTEM_PROMPT,
+        )
+    else:
+        system_prompt = PATENT_DRAFT_SYSTEM_PROMPT
 
-Technical Field: {technical_field}
+    prompt = f"""Technical Field: {technical_field}
 Claim Style: {claim_style}
 
 Invention Description:
 {invention_description}
 {context_sections}
 
-Please draft a complete patent application following the USPTO format above."""
+Please draft a complete patent application following the format specified."""
 
     from langchain_core.messages import HumanMessage, SystemMessage
 
     messages = [
-        SystemMessage(content=PATENT_DRAFT_SYSTEM_PROMPT),
+        SystemMessage(content=system_prompt),
         HumanMessage(content=prompt),
     ]
 
@@ -211,6 +323,10 @@ Please draft a complete patent application following the USPTO format above."""
     # 3. Cache the result
     if full_response:
         await cache_service.set_llm_response(prompt, "".join(full_response))
+
+    # 4. Append disclaimer for strict RAG outputs
+    if jurisdiction and legal_context_text is not None:
+        yield f"data: {LEGAL_DISCLAIMER}\n\n"
 
     yield "data: [DONE]\n\n"
 
@@ -255,8 +371,17 @@ async def generate_oa_response_stream(
     response_strategy: str = "argue",
     additional_context: Optional[str] = None,
     prior_art_context: Optional[str] = None,
+    # Strict RAG parameters
+    jurisdiction: Optional[str] = None,
+    legal_context_text: Optional[str] = None,
+    patent_context_text: Optional[str] = None,
+    firm_name: str = "the firm",
 ) -> AsyncGenerator[str, None]:
-    """Stream an office action response."""
+    """
+    Stream an office action response.
+    When jurisdiction + legal_context_text are provided, uses strict system prompt
+    that forbids the LLM from using general training knowledge.
+    """
     llm = await _get_llm()
 
     claims_text = "\n".join(
@@ -269,6 +394,19 @@ async def generate_oa_response_stream(
         context_str += f"\n\nKNOWN CITED PRIOR ART:\n{prior_art_context}"
     if additional_context:
         context_str += f"\n\nATTORNEY INSTRUCTIONS/CONTEXT:\n{additional_context}"
+
+    # Determine system prompt: strict (with legal sources) or original
+    if jurisdiction and legal_context_text is not None:
+        system_prompt = build_strict_system_prompt(
+            workflow="Office Action Response Drafting",
+            jurisdiction=jurisdiction,
+            firm_name=firm_name,
+            legal_context_text=legal_context_text,
+            patent_context_text=patent_context_text or "",
+            base_instructions=OA_RESPONSE_SYSTEM_PROMPT,
+        )
+    else:
+        system_prompt = OA_RESPONSE_SYSTEM_PROMPT
 
     prompt = f"""Patent Title: {patent_title}
 
@@ -291,7 +429,7 @@ Please draft a comprehensive, formal response to this Office Action. Include:
     from langchain_core.messages import HumanMessage, SystemMessage
 
     messages = [
-        SystemMessage(content=OA_RESPONSE_SYSTEM_PROMPT),
+        SystemMessage(content=system_prompt),
         HumanMessage(content=prompt),
     ]
 
@@ -300,6 +438,10 @@ Please draft a comprehensive, formal response to this Office Action. Include:
         if hasattr(chunk, "content") and chunk.content:
             full_response.append(chunk.content)
             yield f"data: {chunk.content}\n\n"
+
+    # Append disclaimer for strict RAG outputs
+    if jurisdiction and legal_context_text is not None:
+        yield f"data: {LEGAL_DISCLAIMER}\n\n"
 
     yield "data: [DONE]\n\n"
 
@@ -318,11 +460,17 @@ async def generate_risk_analysis_stream(
     product_description: Optional[str] = None,
     target_claims: Optional[List[int]] = None,
     rag_context: Optional[str] = None,
+    # Strict RAG parameters
+    jurisdiction: Optional[str] = None,
+    legal_context_text: Optional[str] = None,
+    patent_context_text: Optional[str] = None,
+    firm_name: str = "the firm",
 ) -> AsyncGenerator[str, None]:
     """
     Stream a structured risk/infringement/invalidity analysis.
     Produces element-by-element claim charts.
     Uses RAG context from pgvector when available.
+    When legal context is provided, enforces strict source-only reasoning.
     """
     llm = await _get_llm()
 
@@ -425,14 +573,29 @@ Be thorough and precise. Use proper legal terminology. Cite specific claim eleme
         yield "data: [DONE]\n\n"
         return
 
-    messages = [
-        SystemMessage(content=f"""You are an expert patent litigator conducting a {analysis_type} analysis. 
+    # Determine system prompt: strict or original
+    base_risk_instructions = f"""You are an expert patent litigator conducting a {analysis_type} analysis. 
         
         CRITICAL LEGAL SAFETY RULES:
         1. NEVER state that a product "infringes" or a patent is "invalid". Use neutral language like "the evidence appears to demonstrate elements of".
         2. EXACT CITATION: Every mapping MUST cite the exact claim language in quotes.
         3. DEFENSIVE FOCUS: Explicitly identify 'Non-Infringement Arguments' or 'Differences' where elements are NOT found.
-        """),
+        """
+
+    if jurisdiction and legal_context_text is not None:
+        system_prompt = build_strict_system_prompt(
+            workflow=f"{analysis_type.title()} Analysis",
+            jurisdiction=jurisdiction,
+            firm_name=firm_name,
+            legal_context_text=legal_context_text,
+            patent_context_text=patent_context_text or "",
+            base_instructions=base_risk_instructions,
+        )
+    else:
+        system_prompt = base_risk_instructions
+
+    messages = [
+        SystemMessage(content=system_prompt),
         HumanMessage(content=prompt),
     ]
 
@@ -446,6 +609,10 @@ Be thorough and precise. Use proper legal terminology. Cite specific claim eleme
     # 3. Cache the result
     if full_response:
         await cache_service.set_llm_response(prompt, "".join(full_response))
+
+    # Append disclaimer for strict RAG outputs
+    if jurisdiction and legal_context_text is not None:
+        yield f"data: {LEGAL_DISCLAIMER}\n\n"
     
     yield "data: [DONE]\n\n"
 

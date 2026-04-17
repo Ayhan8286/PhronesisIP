@@ -11,6 +11,7 @@ from app.models.audit import AuditLog, UsageLog, SearchHistory
 from app.models.analysis import AnalysisWorkflow, ProductDescription, ClaimAnalysisResult
 from app.models.portfolio import Client, Portfolio, PortfolioPatent
 from app.models.incident import SystemIncident
+from app.models.legal_source import LegalSource, LegalSourceChunk
 
 __all__ = [
     "Base",
@@ -37,4 +38,6 @@ __all__ = [
     "Portfolio",
     "PortfolioPatent",
     "SystemIncident",
+    "LegalSource",
+    "LegalSourceChunk",
 ]

@@ -15,7 +15,8 @@ import {
   HelpCircle,
   LogOut,
   Building2,
-  ShieldCheck
+  ShieldCheck,
+  BookOpen
 } from "lucide-react";
 
 const navigation = [
@@ -159,6 +160,14 @@ export default function Sidebar() {
             >
               <ShieldCheck className="nav-item-icon" style={{ color: "var(--brand-400)" }} />
               <span style={{ color: "var(--brand-200)" }}>Admin Control</span>
+            </Link>
+            <Link
+              href="/dashboard/admin/knowledge-base"
+              className={`nav-item ${pathname === "/dashboard/admin/knowledge-base" ? "active" : ""}`}
+              style={{ background: pathname === "/dashboard/admin/knowledge-base" ? "var(--brand-500)20" : "transparent" }}
+            >
+              <BookOpen className="nav-item-icon" style={{ color: "var(--brand-400)", width: 16, height: 16 }} />
+              <span style={{ color: "var(--brand-200)" }}>Knowledge Base</span>
             </Link>
           </div>
         )}

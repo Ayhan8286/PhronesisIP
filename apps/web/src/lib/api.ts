@@ -48,7 +48,8 @@ export async function apiStream(
   body: object,
   onChunk: (text: string) => void,
   onDone?: () => void,
-  token?: string
+  token?: string,
+  onSources?: (data: any) => void,
 ) {
   const url = `${API_URL}${path}`;
   const res = await fetch(url, {
@@ -83,6 +84,17 @@ export async function apiStream(
         if (data === "[DONE]") {
           onDone?.();
           return;
+        }
+        // Handle [SOURCES] metadata event from strict RAG pipeline
+        if (data.startsWith("[SOURCES]")) {
+          try {
+            const sourcesData = JSON.parse(data.slice(9));
+            onSources?.(sourcesData);
+          } catch {
+            // If parse fails, treat as regular chunk
+            onChunk(data);
+          }
+          continue;
         }
         onChunk(data);
       }
@@ -370,21 +382,21 @@ export const createApi = (token?: string) => ({
       { token }
     ),
 
-  // AI Streaming
-  generateDraft: (body: object, onChunk: (t: string) => void, onDone?: () => void) =>
-    apiStream("/api/v1/drafting/generate", body, onChunk, onDone, token),
+  // AI Streaming (with strict RAG support)
+  generateDraft: (body: object, onChunk: (t: string) => void, onDone?: () => void, onSources?: (data: any) => void) =>
+    apiStream("/api/v1/drafting/generate", body, onChunk, onDone, token, onSources),
 
-  generateOAResponse: (oaId: string, body: object, onChunk: (t: string) => void, onDone?: () => void) =>
-    apiStream(`/api/v1/office-actions/${oaId}/generate-response`, body, onChunk, onDone, token),
+  generateOAResponse: (oaId: string, body: object, onChunk: (t: string) => void, onDone?: () => void, onSources?: (data: any) => void) =>
+    apiStream(`/api/v1/office-actions/${oaId}/generate-response`, body, onChunk, onDone, token, onSources),
 
-  runRiskAnalysis: (body: object, onChunk: (t: string) => void, onDone?: () => void) =>
-    apiStream("/api/v1/prior-art/risk-analysis", body, onChunk, onDone, token),
+  runRiskAnalysis: (body: object, onChunk: (t: string) => void, onDone?: () => void, onSources?: (data: any) => void) =>
+    apiStream("/api/v1/prior-art/risk-analysis", body, onChunk, onDone, token, onSources),
 
-  runPriorArtAnalysis: (body: object, onChunk: (t: string) => void, onDone?: () => void) =>
-    apiStream("/api/v1/prior-art/analyze", body, onChunk, onDone, token),
+  runPriorArtAnalysis: (body: object, onChunk: (t: string) => void, onDone?: () => void, onSources?: (data: any) => void) =>
+    apiStream("/api/v1/prior-art/analyze", body, onChunk, onDone, token, onSources),
 
-  generateDueDiligence: (body: object, onChunk: (t: string) => void, onDone?: () => void) =>
-    apiStream("/api/v1/prior-art/due-diligence", body, onChunk, onDone, token),
+  generateDueDiligence: (body: object, onChunk: (t: string) => void, onDone?: () => void, onSources?: (data: any) => void) =>
+    apiStream("/api/v1/prior-art/due-diligence", body, onChunk, onDone, token, onSources),
 
   exportOAResponse: async (oaId: string, draftText: string) => {
     const url = `${API_URL}/api/v1/export/office-action/${oaId}`;
@@ -406,6 +418,57 @@ export const createApi = (token?: string) => ({
       body: JSON.stringify({ draft_content: draftContent }),
       token,
     }),
+
+  // Legal Knowledge Base
+  listLegalSources: (jurisdiction?: string, includeInactive = false) =>
+    apiFetch<any[]>(
+      `/api/v1/knowledge-base/sources?include_inactive=${includeInactive}${jurisdiction ? `&jurisdiction=${jurisdiction}` : ""}`,
+      { token }
+    ),
+
+  uploadLegalSource: (formData: FormData) => {
+    const url = `${API_URL}/api/v1/knowledge-base/sources`;
+    return fetch(url, {
+      method: "POST",
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+      body: formData,
+    }).then(async (res) => {
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ detail: "Upload failed" }));
+        throw new Error(err.detail || "Upload failed");
+      }
+      return res.json();
+    });
+  },
+
+  toggleLegalSource: (sourceId: string, isActive: boolean) =>
+    apiFetch<any>(`/api/v1/knowledge-base/sources/${sourceId}`, {
+      method: "PATCH",
+      body: JSON.stringify({ is_active: isActive }),
+      token,
+    }),
+
+  deleteLegalSource: (sourceId: string) =>
+    apiFetch<void>(`/api/v1/knowledge-base/sources/${sourceId}`, {
+      method: "DELETE",
+      token,
+    }),
+
+  getJurisdictions: () =>
+    apiFetch<Array<{ jurisdiction: string; source_count: number; total_chunks: number }>>(
+      "/api/v1/knowledge-base/jurisdictions",
+      { token }
+    ),
+
+  getJurisdictionStatus: (code: string) =>
+    apiFetch<{
+      jurisdiction: string;
+      source_count: number;
+      total_chunks: number;
+      has_sources: boolean;
+      is_stale: boolean;
+      oldest_source_date: string | null;
+    }>(`/api/v1/knowledge-base/jurisdictions/${code}/status`, { token }),
 });
 
 // Original api object kept for compatibility with any existing static imports, but empty/null token

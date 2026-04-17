@@ -108,7 +108,12 @@ async def generate_draft(
     """
     AI-generate a patent application draft.
     Returns a streamed response for real-time display.
-    Accepts optional spec_context from uploaded engineering documents.
+
+    When jurisdiction is provided, enables STRICT LEGAL RAG:
+    - Retrieves relevant legal authority from the Legal Knowledge Base
+    - Forbids the LLM from using general training knowledge
+    - Enforces [Source: ...] citations on every legal claim
+    - Sends [SOURCES] metadata event for the UI trust panel
     """
     # Handle both field names from frontend
     description = data.invention_description or data.description or ""
@@ -116,14 +121,82 @@ async def generate_draft(
         from fastapi import HTTPException
         raise HTTPException(status_code=400, detail="Invention description is required")
 
-    return StreamingResponse(
-        generate_patent_draft_stream(
+    # Strict RAG: perform dual retrieval when jurisdiction is specified
+    legal_context_text = None
+    patent_context_text = None
+    sources_metadata = None
+    firm_name = "the firm"
+
+    if data.jurisdiction:
+        from app.services.ingestion import retrieve_full_context
+        from app.models import Firm
+
+        # Get firm name for the prompt
+        firm_result = await db.execute(
+            select(Firm.name).where(Firm.id == user.firm_id)
+        )
+        firm_row = firm_result.first()
+        if firm_row:
+            firm_name = firm_row.name
+
+        patent_id = uuid.UUID(data.patent_id) if data.patent_id else None
+
+        context = await retrieve_full_context(
+            query=description[:500],  # Use first 500 chars as query
+            jurisdiction=data.jurisdiction,
+            firm_id=user.firm_id,
+            user_id=user.id,
+            db=db,
+            patent_id=patent_id,
+        )
+
+        legal_context_text = context["legal_context_text"]
+        patent_context_text = context["patent_context_text"]
+        sources_metadata = {
+            "sources_used": context["sources_used"],
+            "has_legal_authority": context["has_legal_authority"],
+            "jurisdiction": context["jurisdiction"],
+        }
+
+    import json as json_lib
+    from app.services.citation_validator import validate_citations
+
+    async def wrapped_stream():
+        full_response_parts = []
+
+        async for chunk in generate_patent_draft_stream(
             invention_description=description,
             technical_field=data.technical_field,
             prior_art_context=data.prior_art_context,
             claim_style=data.claim_style,
             spec_context=data.spec_context,
-        ),
+            firm_id=user.firm_id,
+            user_id=user.id,
+            jurisdiction=data.jurisdiction,
+            legal_context_text=legal_context_text,
+            patent_context_text=patent_context_text,
+            firm_name=firm_name,
+        ):
+            # Collect full response for citation validation
+            if chunk.startswith("data: ") and chunk.strip() not in ("data: [DONE]",):
+                full_response_parts.append(chunk[6:].strip())
+            yield chunk
+
+        # After stream completes, send citation validation + sources metadata
+        if data.jurisdiction and sources_metadata:
+            full_text = "".join(full_response_parts)
+            validation = validate_citations(
+                full_text,
+                sources_metadata.get("sources_used", []),
+            )
+            sources_event = {
+                **sources_metadata,
+                "citation_validation": dict(validation),
+            }
+            yield f"data: [SOURCES]{json_lib.dumps(sources_event)}\n\n"
+
+    return StreamingResponse(
+        wrapped_stream(),
         media_type="text/event-stream",
     )
 

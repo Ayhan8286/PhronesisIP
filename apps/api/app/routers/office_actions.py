@@ -119,6 +119,12 @@ async def generate_oa_response(
     AI-generate a response to an office action.
     Loads the patent's actual claims for claim-by-claim arguments.
     Streams the response for real-time display.
+
+    When jurisdiction is provided, enables STRICT LEGAL RAG:
+    - Retrieves relevant MPEP/statute/rule sections from the Legal Knowledge Base
+    - Forbids the LLM from using general training knowledge
+    - Enforces [Source: ...] citations on every legal claim
+    - Sends [SOURCES] metadata event for the UI trust panel
     """
     # Get the office action with patent
     result = await db.execute(
@@ -164,7 +170,41 @@ async def generate_oa_response(
     for r in cited_refs:
         prior_art_context += f"Reference: {r.reference_number} ({r.reference_title})\nAbstract: {r.reference_abstract}\n\n"
 
-    # 5. Concurrency Control (Semaphore)
+    # Strict RAG: dual retrieval when jurisdiction is specified
+    legal_context_text = None
+    patent_context_text = None
+    sources_metadata = None
+    firm_name = "the firm"
+
+    if data.jurisdiction:
+        from app.services.ingestion import retrieve_full_context
+        from app.models import Firm
+
+        firm_result = await db.execute(
+            select(Firm.name).where(Firm.id == user.firm_id)
+        )
+        firm_row = firm_result.first()
+        if firm_row:
+            firm_name = firm_row.name
+
+        context = await retrieve_full_context(
+            query=f"{action.patent.title} office action response {action.extracted_text[:300]}",
+            jurisdiction=data.jurisdiction,
+            firm_id=user.firm_id,
+            user_id=user.id,
+            db=db,
+            patent_id=action.patent_id,
+        )
+
+        legal_context_text = context["legal_context_text"]
+        patent_context_text = context["patent_context_text"]
+        sources_metadata = {
+            "sources_used": context["sources_used"],
+            "has_legal_authority": context["has_legal_authority"],
+            "jurisdiction": context["jurisdiction"],
+        }
+
+    # Concurrency Control (Semaphore)
     from app.services.cache import cache_service
     if not await cache_service.acquire_llm_semaphore(limit=10):
         raise HTTPException(
@@ -172,17 +212,42 @@ async def generate_oa_response(
             detail="System is currently generating responses for other attorneys. Please try again in 30 seconds."
         )
 
+    import json as json_lib
+    from app.services.citation_validator import validate_citations
+
     async def wrapped_stream():
+        full_response_parts = []
         try:
             async for chunk in generate_oa_response_stream(
                 office_action_text=action.extracted_text,
                 patent_title=action.patent.title,
                 patent_claims=claims_data,
+                firm_id=user.firm_id,
+                user_id=user.id,
                 response_strategy=data.response_strategy,
                 additional_context=data.additional_context,
                 prior_art_context=prior_art_context if prior_art_context else None,
+                jurisdiction=data.jurisdiction,
+                legal_context_text=legal_context_text,
+                patent_context_text=patent_context_text,
+                firm_name=firm_name,
             ):
+                if chunk.startswith("data: ") and chunk.strip() not in ("data: [DONE]",):
+                    full_response_parts.append(chunk[6:].strip())
                 yield chunk
+
+            # Send citation validation + sources metadata
+            if data.jurisdiction and sources_metadata:
+                full_text = "".join(full_response_parts)
+                validation = validate_citations(
+                    full_text,
+                    sources_metadata.get("sources_used", []),
+                )
+                sources_event = {
+                    **sources_metadata,
+                    "citation_validation": dict(validation),
+                }
+                yield f"data: [SOURCES]{json_lib.dumps(sources_event)}\n\n"
         finally:
             await cache_service.release_llm_semaphore()
 

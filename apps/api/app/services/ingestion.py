@@ -243,6 +243,77 @@ def format_context_for_llm(chunks: List[RetrievedChunk]) -> str:
     return "\n".join(lines)
 
 
+# ── DUAL SEARCH: Combined Patent + Legal Authority Retrieval ────────────────
+
+async def retrieve_full_context(
+    query: str,
+    jurisdiction: str,
+    firm_id: uuid.UUID,
+    user_id: uuid.UUID,
+    db: AsyncSession,
+    patent_id: Optional[uuid.UUID] = None,
+    include_patent_context: bool = True,
+    include_legal_context: bool = True,
+) -> dict:
+    """
+    Perform BOTH patent and legal authority vector searches.
+
+    This is the core of strict RAG — every generation workflow calls this
+    to get the full context that the LLM is allowed to reason over.
+
+    Search 1: Patent context (existing) — relevant chunks from the patent
+    Search 2: Legal authority (new) — relevant laws, rules, and guidelines
+
+    Returns a combined context dict with metadata for the UI trust panel.
+    """
+    from app.services.legal_kb import (
+        retrieve_legal_context,
+        format_legal_context_for_llm,
+        get_sources_metadata,
+    )
+
+    patent_chunks = []
+    legal_chunks = []
+
+    # Search 1: Patent context (if requested and patent_id provided)
+    if include_patent_context and patent_id:
+        patent_chunks = await retrieve_context(
+            query=query,
+            firm_id=firm_id,
+            db=db,
+            top_k=10,
+            patent_id_filter=patent_id,
+        )
+
+    # Search 2: Legal authority (if requested)
+    if include_legal_context:
+        legal_chunks = await retrieve_legal_context(
+            query=query,
+            jurisdiction=jurisdiction,
+            firm_id=firm_id,
+            user_id=user_id,
+            db=db,
+            top_k=8,
+        )
+
+    # Format for LLM consumption
+    patent_context_text = format_context_for_llm(patent_chunks) if patent_chunks else ""
+    legal_context_text = format_legal_context_for_llm(legal_chunks) if legal_chunks else ""
+
+    # Build sources metadata for the UI trust panel
+    sources_used = get_sources_metadata(legal_chunks) if legal_chunks else []
+
+    return {
+        "patent_context": patent_chunks,
+        "legal_authority": legal_chunks,
+        "patent_context_text": patent_context_text,
+        "legal_context_text": legal_context_text,
+        "has_legal_authority": len(legal_chunks) > 0,
+        "jurisdiction": jurisdiction,
+        "sources_used": [dict(s) for s in sources_used],
+    }
+
+
 # ── Patent Import (from external search) ────────────────────────────────────
 
 async def ingest_patent_from_external(

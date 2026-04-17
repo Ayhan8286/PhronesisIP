@@ -37,7 +37,10 @@ class DraftGenerationRequest(BaseModel):
     prior_art_context: Optional[str] = None
     claim_style: str = "apparatus"  # apparatus, method, system, composition
     spec_context: Optional[str] = None  # extracted text from uploaded engineering spec
+    jurisdiction: Optional[str] = None  # USPTO, EPO, etc. — enables strict legal RAG
+    patent_id: Optional[str] = None  # for patent-specific context retrieval
 
 class OAResponseGenerationRequest(BaseModel):
     response_strategy: str = "argue"  # argue, amend, both
     additional_context: Optional[str] = None
+    jurisdiction: Optional[str] = None  # USPTO, EPO, etc. — enables strict legal RAG

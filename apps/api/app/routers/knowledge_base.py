@@ -178,18 +178,28 @@ async def upload_legal_source(
         await db.rollback()
         raise HTTPException(status_code=500, detail=f"Database constraint error: {str(e)}")
 
-    # Read PDF and run ingestion pipeline
-    pdf_bytes = await file.read()
-    ingestion_result = await ingest_legal_source(
-        pdf_bytes=pdf_bytes,
-        source_id=source.id,
-        firm_id=db_firm_id,
-        user_id=user.id,
-        db=db,
-    )
+    try:
+        # Read PDF and run ingestion pipeline
+        pdf_bytes = await file.read()
+        ingestion_result = await ingest_legal_source(
+            pdf_bytes=pdf_bytes,
+            source_id=source.id,
+            firm_id=db_firm_id,
+            user_id=user.id,
+            db=db,
+        )
 
-    if "error" in ingestion_result:
-        raise HTTPException(status_code=400, detail=ingestion_result["error"])
+        if "error" in ingestion_result:
+            raise ValueError(ingestion_result["error"])
+
+    except Exception as e:
+        # If ingestion fails (e.g., Voyage RateLimitError, OOM, etc), delete the source record
+        await db.execute(text("DELETE FROM legal_sources WHERE id = :sid"), {"sid": str(source.id)})
+        await db.commit()
+        error_msg = str(e)
+        if "RateLimitError" in error_msg or "rate limit" in error_msg.lower() or "payment method" in error_msg.lower():
+            raise HTTPException(status_code=429, detail="Voyage AI Rate Limit Exceeded: Free tier limited to 10K tokens/min. Please add a payment method to Voyage AI or upload a smaller file.")
+        raise HTTPException(status_code=400, detail=f"Ingestion failed: {error_msg}")
 
     return {
         "message": "Legal source uploaded and indexed successfully",

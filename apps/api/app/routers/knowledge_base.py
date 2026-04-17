@@ -19,7 +19,7 @@ from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
-from app.auth import get_active_firm_user, get_system_admin, CurrentUser
+from app.auth import get_active_firm_user, get_system_admin, CurrentUser, get_current_user
 from app.models.legal_source import LegalSource, LegalSourceChunk
 from app.schemas.legal_source import (
     LegalSourceResponse,
@@ -66,7 +66,7 @@ async def list_legal_sources(
     jurisdiction: Optional[str] = Query(None, description="Filter by jurisdiction"),
     include_inactive: bool = Query(False, description="Include deactivated sources"),
     db: AsyncSession = Depends(get_db),
-    user: CurrentUser = Depends(get_active_firm_user),
+    user: CurrentUser = Depends(get_current_user),
 ):
     """
     List all legal sources accessible to the current firm.
@@ -99,7 +99,7 @@ async def upload_legal_source(
     source_updated_at: Optional[str] = Form(None),
     is_global: bool = Form(False),
     db: AsyncSession = Depends(get_db),
-    user: CurrentUser = Depends(get_active_firm_user),
+    user: CurrentUser = Depends(get_current_user),
 ):
     """
     Upload a new legal source document (PDF).
@@ -182,7 +182,7 @@ async def upload_legal_source(
 async def get_legal_source(
     source_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
-    user: CurrentUser = Depends(get_active_firm_user),
+    user: CurrentUser = Depends(get_current_user),
 ):
     """Get details of a specific legal source."""
     result = await db.execute(
@@ -203,7 +203,7 @@ async def update_legal_source(
     source_id: uuid.UUID,
     data: LegalSourceUpdate,
     db: AsyncSession = Depends(get_db),
-    user: CurrentUser = Depends(get_active_firm_user),
+    user: CurrentUser = Depends(get_current_user),
 ):
     """
     Update a legal source (toggle active/inactive, update metadata).
@@ -232,7 +232,7 @@ async def update_legal_source(
 async def delete_legal_source(
     source_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
-    user: CurrentUser = Depends(get_active_firm_user),
+    user: CurrentUser = Depends(get_current_user),
 ):
     """
     Delete a legal source and all its chunks.
@@ -260,7 +260,7 @@ async def preview_source_chunks(
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
     db: AsyncSession = Depends(get_db),
-    user: CurrentUser = Depends(get_active_firm_user),
+    user: CurrentUser = Depends(get_current_user),
 ):
     """
     Preview the chunked content of a legal source.
@@ -303,7 +303,7 @@ async def preview_source_chunks(
 @router.get("/jurisdictions", response_model=List[JurisdictionListItem])
 async def list_jurisdictions(
     db: AsyncSession = Depends(get_db),
-    user: CurrentUser = Depends(get_active_firm_user),
+    user: CurrentUser = Depends(get_current_user),
 ):
     """
     List all jurisdictions that have at least one active legal source.
@@ -317,7 +317,7 @@ async def list_jurisdictions(
 async def get_jurisdiction_status_endpoint(
     code: str,
     db: AsyncSession = Depends(get_db),
-    user: CurrentUser = Depends(get_active_firm_user),
+    user: CurrentUser = Depends(get_current_user),
 ):
     """
     Check if a jurisdiction has adequate legal sources for strict RAG.

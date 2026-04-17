@@ -20,7 +20,7 @@ export function useApi() {
       const originalMethod = staticApi[key];
       
       if (typeof originalMethod === "function") {
-        // @ts-expect-error - dynamic proxying requires some casting
+        // @ts-ignore - dynamic proxying requires some casting
         wrappedApi[key] = async (...args: any[]) => {
           const token = await getToken();
           

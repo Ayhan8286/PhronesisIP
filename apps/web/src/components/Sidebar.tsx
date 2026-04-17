@@ -86,8 +86,8 @@ export default function Sidebar() {
     <aside className="sidebar">
       {/* Logo */}
       <div className="sidebar-header">
-        <div className="sidebar-logo">IQ</div>
-        <span className="sidebar-title">PatentIQ</span>
+        <div className="sidebar-logo">IP</div>
+        <span className="sidebar-title">PhronesisIP</span>
       </div>
 
       {/* Organization Switcher */}

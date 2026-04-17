@@ -9,7 +9,7 @@ const inter = Inter({
 });
 
 export const metadata: Metadata = {
-  title: "PatentIQ — AI-Powered Patent Intelligence",
+  title: "PhronesisIP — AI-Powered Patent Intelligence",
   description:
     "Accelerate patent prosecution and portfolio management with AI-powered drafting, office action responses, and prior art analysis.",
 };

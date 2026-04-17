@@ -66,7 +66,7 @@ async def search_patents(
                     pe.chunk_text as matched_text,
                     pe.section_type,
                     pe.page_number,
-                    ((pe.embedding <#> :query_embedding::vector) * -1) * 
+                    ((pe.embedding <#> CAST(:query_embedding AS vector)) * -1) * 
                     (CASE WHEN pe.section_type = 'claims' THEN 1.2 ELSE 1.0 END) as score
                 FROM patent_embeddings pe
                 JOIN patents p ON pe.patent_id = p.id

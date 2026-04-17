@@ -175,7 +175,7 @@ async def ingest_legal_source(
                      section, page_number, embedding)
                 VALUES
                     (:id, :source_id, :firm_id, :chunk_text, :chunk_index,
-                     :section, :page_number, :embedding::vector)
+                     :section, :page_number, CAST(:embedding AS vector))
             """),
             {
                 "id": str(uuid.uuid4()),
@@ -246,14 +246,14 @@ async def retrieve_legal_context(
             ls.jurisdiction AS source_jurisdiction,
             ls.doc_type AS source_doc_type,
             ls.id AS source_id,
-            1 - (lsc.embedding <=> :query_embedding::vector) AS score
+            1 - (lsc.embedding <=> CAST(:query_embedding AS vector)) AS score
         FROM legal_source_chunks lsc
         JOIN legal_sources ls ON lsc.source_id = ls.id
         WHERE ls.jurisdiction = :jurisdiction
           AND (ls.firm_id = :firm_id OR ls.firm_id IS NULL)
           AND ls.is_active = true
-          AND 1 - (lsc.embedding <=> :query_embedding::vector) > :threshold
-        ORDER BY lsc.embedding <=> :query_embedding::vector
+          AND 1 - (lsc.embedding <=> CAST(:query_embedding AS vector)) > :threshold
+        ORDER BY lsc.embedding <=> CAST(:query_embedding AS vector)
         LIMIT :top_k
     """)
 

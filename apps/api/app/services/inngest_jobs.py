@@ -85,7 +85,7 @@ async def process_large_patent(ctx: inngest.Context, step: inngest.Step) -> dict
                             (id, patent_id, chunk_index, chunk_text, embedding,
                              page_number, section_type, firm_id)
                         VALUES
-                            (:id, :patent_id, :chunk_index, :chunk_text, :embedding::vector,
+                            (:id, :patent_id, :chunk_index, :chunk_text, CAST(:embedding AS vector),
                              :page_number, :section_type, :firm_id)
                     """),
                     {
@@ -244,7 +244,7 @@ async def process_oa_references(ctx: inngest.Context, step: inngest.Step) -> dic
                         INSERT INTO patent_embeddings 
                             (id, patent_id, chunk_index, chunk_text, embedding, page_number, section_type, firm_id) 
                         VALUES 
-                            (:id, :patent_id, 0, :chunk_text, :embedding::vector, 1, 'prior_art', :firm_id)
+                            (:id, :patent_id, 0, :chunk_text, CAST(:embedding AS vector), 1, 'prior_art', :firm_id)
                     """),
                     {
                         "id": str(uuid.uuid4()),

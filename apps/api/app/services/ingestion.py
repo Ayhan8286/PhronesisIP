@@ -93,7 +93,7 @@ async def ingest_patent_pdf(
                     (id, patent_id, chunk_index, chunk_text, embedding,
                      page_number, section_type, firm_id)
                 VALUES
-                    (:id, :patent_id, :chunk_index, :chunk_text, :embedding::vector,
+                    (:id, :patent_id, :chunk_index, :chunk_text, CAST(:embedding AS vector),
                      :page_number, :section_type, :firm_id)
             """),
             {
@@ -194,11 +194,11 @@ async def retrieve_context(
             pe.page_number,
             pe.patent_id,
             p.title as patent_title,
-            1 - (pe.embedding <=> :query_embedding::vector) as score
+            1 - (pe.embedding <=> CAST(:query_embedding AS vector)) as score
         FROM patent_embeddings pe
         JOIN patents p ON pe.patent_id = p.id
-        WHERE {where_clause}
-        ORDER BY pe.embedding <=> :query_embedding::vector
+        WHERE {where_clause} AND p.deleted_at IS NULL
+        ORDER BY pe.embedding <=> CAST(:query_embedding AS vector)
         LIMIT :top_k
     """)
 
@@ -405,7 +405,7 @@ async def ingest_patent_from_external(
                             (id, patent_id, chunk_index, chunk_text, embedding,
                              page_number, section_type, firm_id)
                         VALUES
-                            (:id, :patent_id, :chunk_index, :chunk_text, :embedding::vector,
+                            (:id, :patent_id, :chunk_index, :chunk_text, CAST(:embedding AS vector),
                              :page_number, :section_type, :firm_id)
                     """),
                     {

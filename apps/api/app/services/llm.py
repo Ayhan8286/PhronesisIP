@@ -1,253 +1,228 @@
 """
-LLM service: handles AI generation for all workflows.
-Supports Gemini (dev) and Claude (production) via LangChain.
-Produces STRUCTURED legal documents, not just free text.
+LLM service for generation workflows.
 
-Includes:
-- Redis caching (48h TTL) — same query = instant response, no API cost
-- RAG context injection — Claude answers from retrieved pgvector chunks
-- STRICT RAG: when legal sources are provided, the LLM is forbidden
-  from using general training knowledge. Every legal claim must cite
-  a [Source: ...] from the uploaded Legal Knowledge Base.
+Supports:
+- xAI Grok via the OpenAI-compatible API
+- Groq as a backward-compatible fallback
+
+The default configuration is now xAI so the only paid AI dependency can be Grok,
+while retrieval can stay on open-source embeddings.
 """
 
-import json
-import uuid
 import logging
-from typing import AsyncGenerator, Optional, List
+import uuid
+from typing import AsyncGenerator, Optional
+
+from langchain_core.messages import HumanMessage
 
 from app.config import settings
 from app.services.cache import cache_service
+from app.services.usage import log_usage
+
+logger = logging.getLogger(__name__)
 
 
 async def _get_llm(temperature: float = 0.3):
-    """Get the configured LLM instance."""
-    if settings.LLM_PROVIDER == "gemini":
-        from langchain_google_genai import ChatGoogleGenerativeAI
+    """Return the configured chat model."""
+    provider = (settings.LLM_PROVIDER or "xai").lower()
 
-        return ChatGoogleGenerativeAI(
-            model=settings.LLM_MODEL,
-            google_api_key=settings.GOOGLE_API_KEY,
-            temperature=temperature,
-            streaming=True,
-        )
-    else:
-        from langchain_community.chat_models import ChatAnthropic
+    if provider == "xai":
+        from langchain_openai import ChatOpenAI
 
-        return ChatAnthropic(
+        return ChatOpenAI(
             model=settings.LLM_MODEL,
-            anthropic_api_key=settings.ANTHROPIC_API_KEY,
+            api_key=settings.XAI_API_KEY,
+            base_url=settings.XAI_BASE_URL,
             temperature=temperature,
             streaming=True,
         )
 
+    if provider == "groq":
+        from langchain_groq import ChatGroq
 
-# ---------------------------------------------------------------------------
-# Legal Disclaimer (appended to every grounded generation)
-# ---------------------------------------------------------------------------
+        return ChatGroq(
+            model=settings.LLM_MODEL,
+            groq_api_key=settings.GROQ_API_KEY,
+            temperature=temperature,
+            streaming=True,
+        )
+
+    raise ValueError(f"Unsupported LLM_PROVIDER: {settings.LLM_PROVIDER}")
+
 
 LEGAL_DISCLAIMER = (
     "\n\n---\n"
     "*Generated using provided legal sources only. "
     "This output requires attorney review before use. "
-    "PhronesisIP and Box Mation accept no legal liability "
-    "for outputs used without professional review.*"
+    "PhronesisIP provides AI assistance only. The reviewing attorney accepts "
+    "professional responsibility for this filing.*"
 )
 
+PATENT_DRAFT_SYSTEM_PROMPT = """You are a senior USPTO patent prosecutor with 20 years of experience.
+You are drafting a patent application under 35 U.S.C. § 111.
 
-# ---------------------------------------------------------------------------
-# Strict System Prompt Builder (core of grounded generation)
-# ---------------------------------------------------------------------------
+STRICT RULES — follow exactly:
+1. TRANSITIONAL PHRASE: Always use "comprising" unless the client explicitly requests "consisting of". Comprising is open-ended and provides the broadest protection.
+2. CLAIM STRUCTURE: Every independent claim must follow:
+   "A [claim type] comprising: [element]; [element]; wherein..."
+3. CLAIM TYPES: Draft three independent claims:
+   - Apparatus/System claim ("A system comprising...")
+   - Method claim ("A method comprising the steps of...")
+   - CRM claim ("A non-transitory computer-readable medium...")
+4. FORBIDDEN WORDS: Never use in claims:
+   optionally, preferably, approximately, generally, such as, etc., means for, should, may, might
+5. ANTECEDENT BASIS: Every element introduced with "a/an" must be referred to as "the [element]" thereafter.
+6. DEPENDENT CLAIMS: Draft 5-10 dependent claims adding specific features.
+7. SPECIFICATION: Use language like "in one embodiment" and "in another embodiment" and keep the disclosure broad.
+8. CITE YOUR SOURCES: After each claim, note which MPEP section or 35 U.S.C. provision it satisfies.
+9. FLAG ISSUES: If a claim element might face § 101 eligibility issues, add: [ATTORNEY REVIEW: § 101 risk]
+"""
 
-def build_strict_system_prompt(
-    workflow: str,
-    jurisdiction: str,
-    firm_name: str,
-    legal_context_text: str,
-    patent_context_text: str,
-    base_instructions: str = "",
-) -> str:
-    """
-    Build a system prompt that FORBIDS the LLM from using general training
-    knowledge. The LLM becomes a reasoning engine over provided sources ONLY.
+OA_RESPONSE_SYSTEM_PROMPT = """You are a senior USPTO patent prosecutor responding to an Office Action under 37 C.F.R. § 1.111.
 
-    This is the most critical function in the strict RAG pipeline.
-    """
-    return f"""You are a senior patent attorney assistant for {firm_name}.
-You are performing: {workflow}
-Jurisdiction: {jurisdiction}
+REJECTION ANALYSIS RULES:
+1. Identify EVERY ground of rejection.
+2. For each § 102 rejection: find ONE missing element and state it clearly.
+3. For each § 103 rejection: argue lack of motivation to combine, inoperability, or unexpected results.
+4. NEVER admit prior art without explicit client approval.
+5. NEVER say the invention "is similar to" the cited art.
+6. Quote exact support locations from cited references whenever available.
+7. Propose claim amendments only when argument alone is insufficient.
+"""
 
-━━━━ STRICT OPERATING RULES ━━━━
+INVALIDITY_ANALYSIS_SYSTEM_PROMPT = """You are a senior IP litigator building an invalidity case.
 
-RULE 1 — USE ONLY THE PROVIDED SOURCES BELOW.
-You have been given two sets of information:
-  (A) Legal Authority: laws, rules, and guidelines
-  (B) Patent Context: the specific patent being worked on
-These are the ONLY sources you may use.
-Do NOT use your general training knowledge.
-Do NOT draw on information not present in these sources.
-Do NOT assume legal standards not stated in the provided text.
+INVALIDITY ANALYSIS RULES:
+1. Analyze EVERY independent claim separately.
+2. For each claim element, search the prior art for explicit, implied, or combination disclosure.
+3. Prior art must predate the filing date.
+4. Generate a formal claim chart:
+   Claim Element | Prior Art Reference | Location in Reference
+5. For § 103 combinations: state the motivation to combine.
+6. Flag claim elements with no prior art found.
+7. Note confidence per element:
+   [HIGH CONFIDENCE] [MEDIUM - attorney review] [LOW - weak art]
+"""
 
-RULE 2 — IF YOU DO NOT HAVE ENOUGH INFORMATION, SAY SO.
-If the provided sources do not contain enough information
-to answer accurately, respond with:
-"The provided legal sources do not contain sufficient
-information on this point. Please upload the relevant
-{jurisdiction} guidelines for [specific topic]."
-Do NOT guess. Do NOT fill gaps with general knowledge.
+PATENT_SUMMARY_SYSTEM_PROMPT = """You are an expert patent analyst.
 
-RULE 3 — CITE EVERY LEGAL CLAIM YOU MAKE.
-Every legal statement in your output must include
-a citation in this format: [Source: {{title}}, {{section}}]
-where {{title}} is the document name and {{section}} is the
-specific section reference. If you cannot cite it, do not state it.
+Summarize the patent in plain, accurate language with these sections:
+1. Title
+2. Core invention
+3. Novel technical ideas
+4. Main independent claim themes
+5. Commercial or litigation relevance
 
-RULE 4 — FOLLOW {jurisdiction} STANDARDS EXACTLY.
-Apply only the rules provided for {jurisdiction}.
-Do not mix rules from other jurisdictions.
-If {jurisdiction} rules are silent on something,
-state that they are silent — do not import rules
-from another jurisdiction to fill the gap.
-
-RULE 5 — FLAG UNCERTAINTY EXPLICITLY.
-If a legal point in the sources is ambiguous,
-write: [ATTORNEY REVIEW REQUIRED: {{reason}}]
-Do not resolve ambiguity yourself.
-
-{base_instructions}
-
-━━━━ LEGAL AUTHORITY PROVIDED ━━━━
-
-{legal_context_text if legal_context_text else
-"[WARNING: No legal sources found for this jurisdiction. "
-"Generation is proceeding without legal authority. "
-"Attorney must verify all outputs against applicable law.]"}
-
-━━━━ PATENT CONTEXT PROVIDED ━━━━
-
-{patent_context_text if patent_context_text else "[No patent context provided]"}
-
-━━━━ BEGIN TASK ━━━━
+Stay grounded in the provided text. If a detail is unclear, say so.
 """
 
 
-# ---------------------------------------------------------------------------
-# Patent Summary (auto-generated after PDF upload)
-# ---------------------------------------------------------------------------
+def build_grounded_prompt(system_rules: str, legal_chunks: str, context: str, user_input: str) -> str:
+    return f"""{system_rules}
 
-async def generate_patent_summary(full_text: str, firm_id: uuid.UUID, user_id: uuid.UUID) -> dict:
-    """
-    Generate a structured patent summary from full text.
-    Returns a dict with core_invention, claims_breakdown, weaknesses, etc.
-    """
-    llm = await _get_llm(temperature=0.2)
+LEGAL CONTEXT FROM KNOWLEDGE BASE:
+{legal_chunks}
 
-    prompt = f"""You are a senior patent attorney. Analyze this patent and produce a structured summary.
+BACKGROUND CONTEXT:
+{context}
 
-PATENT TEXT (truncated to key sections):
-{full_text[:15000]}
+USER REQUEST / DISCLOSURE:
+{user_input}
+"""
 
-Return your analysis in this EXACT JSON format:
-{{
-    "core_invention": "One paragraph describing the core inventive concept",
-    "technical_field": "The technical field this patent covers",
-    "independent_claims_count": <number>,
-    "dependent_claims_count": <number>,
-    "claims_breakdown": [
-        {{
-            "claim_number": 1,
-            "type": "independent",
-            "summary": "Brief summary of what this claim covers",
-            "key_elements": ["element 1", "element 2"],
-            "breadth": "broad|medium|narrow"
-        }}
-    ],
-    "weaknesses": [
-        {{
-            "claim_number": 1,
-            "issue": "Description of the weakness",
-            "severity": "high|medium|low",
-            "exploitation_angle": "How an opponent could attack this"
-        }}
-    ],
-    "strongest_claim": {{
-        "claim_number": 9,
-        "reason": "Why this claim is the strongest"
-    }},
-    "prior_art_vulnerability": "high|medium|low",
-    "overall_quality_score": 75
-}}
 
-Return ONLY valid JSON, no markdown formatting."""
+async def _log_llm_usage(
+    result,
+    firm_id: uuid.UUID,
+    user_id: uuid.UUID,
+    workflow_type: str,
+) -> None:
+    usage = getattr(result, "usage_metadata", None) or {}
+    input_tokens = usage.get("input_tokens") or usage.get("prompt_tokens") or 0
+    output_tokens = usage.get("output_tokens") or usage.get("completion_tokens") or 0
 
-    # 1. Try cache
-    cached = await cache_service.get_llm_response(prompt)
-    if cached:
-        try:
-            return json.loads(cached)
-        except:
-            pass
+    if not input_tokens and not output_tokens:
+        response_meta = getattr(result, "response_metadata", {}) or {}
+        token_usage = response_meta.get("token_usage", {}) or {}
+        input_tokens = token_usage.get("prompt_tokens", token_usage.get("input_tokens", 0))
+        output_tokens = token_usage.get("completion_tokens", token_usage.get("output_tokens", 0))
 
-    # 2. Call API
-    from langchain_core.messages import HumanMessage
-    result = await llm.ainvoke([HumanMessage(content=prompt)])
-    content = result.content
-    
-    # 3. Log cost & usage
-    from app.services.usage import track_ai_generation_usage
-    await track_ai_generation_usage(
-        result=result,
-        firm_id=firm_id,
-        user_id=user_id,
-        workflow_type="patent_summary"
+    if input_tokens or output_tokens:
+        await log_usage(
+            firm_id=firm_id,
+            user_id=user_id,
+            provider=settings.LLM_PROVIDER,
+            model=settings.LLM_MODEL,
+            input_tokens=int(input_tokens),
+            output_tokens=int(output_tokens),
+            workflow_type=workflow_type,
+        )
+
+
+async def generate_patent_summary(
+    full_text: str,
+    firm_id: uuid.UUID,
+    user_id: uuid.UUID,
+) -> str:
+    """Generate a concise patent summary."""
+    llm = await _get_llm(temperature=0.1)
+    prompt = build_grounded_prompt(
+        system_rules=PATENT_SUMMARY_SYSTEM_PROMPT,
+        legal_chunks="",
+        context="",
+        user_input=full_text[:20000],
     )
 
-    # 4. Cache and return
+    cached = await cache_service.get_llm_response(prompt)
+    if cached:
+        return cached
+
+    result = await llm.ainvoke([HumanMessage(content=prompt)])
+    content = result.content if hasattr(result, "content") else str(result)
+    content = content if isinstance(content, str) else "".join(content)
+
     await cache_service.set_llm_response(prompt, content)
-    
-    try:
-        # Try to parse JSON from response
-        text = content.strip()
-        # Remove markdown code fences if present
-        if text.startswith("```"):
-            text = text.split("\n", 1)[1]
-            text = text.rsplit("```", 1)[0]
-        return json.loads(text)
-    except (json.JSONDecodeError, IndexError):
-        return {
-            "core_invention": result.content[:500],
-            "raw_analysis": result.content,
-            "parse_error": True,
-        }
+    await _log_llm_usage(result, firm_id=firm_id, user_id=user_id, workflow_type="patent_summary")
+    return content
 
 
-# ---------------------------------------------------------------------------
-# Patent Application Drafting (Streaming)
-# ---------------------------------------------------------------------------
+async def _stream_response(
+    prompt: str,
+    firm_id: uuid.UUID,
+    user_id: uuid.UUID,
+    workflow_type: str,
+    temperature: float,
+) -> AsyncGenerator[str, None]:
+    llm = await _get_llm(temperature=temperature)
 
-PATENT_DRAFT_SYSTEM_PROMPT = """You are an expert patent attorney assistant specializing in drafting
-patent applications for the United States Patent and Trademark Office (USPTO).
+    cached = await cache_service.get_llm_response(prompt)
+    if cached:
+        yield f"data: {cached}\n\n"
+        yield "data: [DONE]\n\n"
+        return
 
-Your drafts must follow the standard USPTO format:
-1. Title of the Invention
-2. Cross-Reference to Related Applications (if applicable)
-3. Field of the Invention
-4. Background of the Invention
-5. Summary of the Invention
-6. Brief Description of the Drawings
-7. Detailed Description of the Preferred Embodiments
-8. Claims (independent and dependent)
-9. Abstract of the Disclosure
+    full_response = []
+    async for chunk in llm.astream([HumanMessage(content=prompt)]):
+        if hasattr(chunk, "content") and chunk.content:
+            text = chunk.content if isinstance(chunk.content, str) else "".join(chunk.content)
+            full_response.append(text)
+            yield f"data: {text}\n\n"
 
-Guidelines:
-- Use precise, technical language appropriate for patent prosecution
-- Claims should be as broad as reasonably possible while being novel over prior art
-- Independent claims should stand alone; dependent claims should add specific limitations
-- Use proper antecedent basis throughout
-- Include at least 3 independent claims and 10+ dependent claims
-- The specification must enable a person skilled in the art to practice the invention
-- LEGAL SAFETY: NEVER concede that any claim features are already known in the prior art or that the invention is obvious. Maintain a strategically novel and non-obvious stance throughout.
-"""
+    final_text = "".join(full_response)
+    if final_text:
+        await cache_service.set_llm_response(prompt, final_text)
+        await log_usage(
+            firm_id=firm_id,
+            user_id=user_id,
+            provider=settings.LLM_PROVIDER,
+            model=settings.LLM_MODEL,
+            input_tokens=0,
+            output_tokens=0,
+            workflow_type=workflow_type,
+        )
+
+    yield f"data: {LEGAL_DISCLAIMER}\n\n"
+    yield "data: [DONE]\n\n"
 
 
 async def generate_patent_draft_stream(
@@ -255,511 +230,53 @@ async def generate_patent_draft_stream(
     technical_field: str,
     firm_id: uuid.UUID,
     user_id: uuid.UUID,
-    prior_art_context: Optional[str] = None,
-    claim_style: str = "apparatus",
-    spec_context: Optional[str] = None,
-    # Strict RAG parameters
-    jurisdiction: Optional[str] = None,
-    legal_context_text: Optional[str] = None,
-    patent_context_text: Optional[str] = None,
-    firm_name: str = "the firm",
+    legal_context_text: str = "",
+    spec_context: str = "",
 ) -> AsyncGenerator[str, None]:
-    """
-    Stream a patent application draft.
-    When jurisdiction + legal_context_text are provided, uses strict system prompt
-    that forbids the LLM from using general training knowledge.
-    """
-    llm = await _get_llm()
-
-    context_sections = ""
-    if prior_art_context:
-        context_sections += f"\n\nKnown Prior Art:\n{prior_art_context}"
-    if spec_context:
-        context_sections += f"\n\nEngineering Specification:\n{spec_context}"
-
-    # Determine system prompt: strict (with legal sources) or original
-    if jurisdiction and legal_context_text is not None:
-        system_prompt = build_strict_system_prompt(
-            workflow="Patent Application Drafting",
-            jurisdiction=jurisdiction,
-            firm_name=firm_name,
-            legal_context_text=legal_context_text,
-            patent_context_text=patent_context_text or "",
-            base_instructions=PATENT_DRAFT_SYSTEM_PROMPT,
-        )
-    else:
-        system_prompt = PATENT_DRAFT_SYSTEM_PROMPT
-
-    prompt = f"""Technical Field: {technical_field}
-Claim Style: {claim_style}
-
-Invention Description:
-{invention_description}
-{context_sections}
-
-Please draft a complete patent application following the format specified."""
-
-    from langchain_core.messages import HumanMessage, SystemMessage
-
-    messages = [
-        SystemMessage(content=system_prompt),
-        HumanMessage(content=prompt),
-    ]
-
-    # 1. Try cache
-    cached = await cache_service.get_llm_response(prompt)
-    if cached:
-        yield f"data: {cached}\n\n"
-        yield "data: [DONE]\n\n"
-        return
-
-    # 2. Stream and collect
-    full_response = []
-    async for chunk in llm.astream(messages):
-        if hasattr(chunk, "content") and chunk.content:
-            full_response.append(chunk.content)
-            yield f"data: {chunk.content}\n\n"
-
-    # 3. Cache the result
-    if full_response:
-        await cache_service.set_llm_response(prompt, "".join(full_response))
-
-    # 4. Append disclaimer for strict RAG outputs
-    if jurisdiction and legal_context_text is not None:
-        yield f"data: {LEGAL_DISCLAIMER}\n\n"
-
-    yield "data: [DONE]\n\n"
-
-
-# ---------------------------------------------------------------------------
-# Office Action Response (Streaming + Structured)
-# ---------------------------------------------------------------------------
-
-OA_RESPONSE_SYSTEM_PROMPT = """You are an expert patent prosecution attorney assistant.
-You are helping draft a response to a USPTO Office Action.
-
-Your response must:
-1. Respectfully address each rejection and objection raised by the Examiner
-2. Present clear, persuasive legal arguments citing relevant MPEP sections
-3. If amending claims, show the amendments clearly
-4. Distinguish the claimed invention from cited prior art references
-5. Address each claim individually when rejections differ
-6. Maintain proper tone — professional, not adversarial
-7. Include a conclusion requesting allowance of all pending claims
-
-Format the response as a formal Office Action Response with:
-- Caption/Header with application number and art unit
-- Remarks section addressing each rejection
-- Claim amendments (if applicable)
-- Conclusion requesting allowance
-- LEGAL SAFETY: NEVER concede infringement, acknowledge validity of prior art for the purpose of anticipation/obviousness, or make any admissions that could be used against the applicant in litigation. Focus exclusively on distinguishing the technical features and legal arguments for non-obviousness.
-
-CLAIM AMENDMENT FORMATTING:
-If amending claims, use the following markers for the DOCX exporter:
-- Use <u>text</u> for any additions.
-- Use <strike>text</strike> for any deletions.
-Example: Claim 1. (Amended) A system comprising <u>a high-speed</u> processor <strike>and a memory</strike>...
-"""
+    prompt = build_grounded_prompt(
+        system_rules=PATENT_DRAFT_SYSTEM_PROMPT,
+        legal_chunks=legal_context_text,
+        context=f"TECHNICAL FIELD:\n{technical_field}\n\n{spec_context}",
+        user_input=invention_description,
+    )
+    async for chunk in _stream_response(prompt, firm_id, user_id, "patent_draft", 0.3):
+        yield chunk
 
 
 async def generate_oa_response_stream(
     office_action_text: str,
-    patent_title: str,
-    patent_claims: List[dict],
+    cited_patent_texts: str,
+    current_claims: str,
     firm_id: uuid.UUID,
     user_id: uuid.UUID,
-    response_strategy: str = "argue",
-    additional_context: Optional[str] = None,
-    prior_art_context: Optional[str] = None,
-    # Strict RAG parameters
-    jurisdiction: Optional[str] = None,
-    legal_context_text: Optional[str] = None,
-    patent_context_text: Optional[str] = None,
-    firm_name: str = "the firm",
+    legal_context_text: str = "",
 ) -> AsyncGenerator[str, None]:
-    """
-    Stream an office action response.
-    When jurisdiction + legal_context_text are provided, uses strict system prompt
-    that forbids the LLM from using general training knowledge.
-    """
-    llm = await _get_llm()
+    prompt = build_grounded_prompt(
+        system_rules=OA_RESPONSE_SYSTEM_PROMPT,
+        legal_chunks=legal_context_text,
+        context=f"CITED REFERENCES:\n{cited_patent_texts}\n\nCURRENT CLAIMS:\n{current_claims}",
+        user_input=office_action_text,
+    )
+    async for chunk in _stream_response(prompt, firm_id, user_id, "office_action_response", 0.2):
+        yield chunk
 
-    claims_text = "\n".join(
-        [f"Claim {c.get('claim_number', c.get('number', '?'))}: {c.get('claim_text', c.get('text', ''))}"
-         for c in patent_claims]
-    ) if patent_claims else "Claims not loaded."
-
-    context_str = ""
-    if prior_art_context:
-        context_str += f"\n\nKNOWN CITED PRIOR ART:\n{prior_art_context}"
-    if additional_context:
-        context_str += f"\n\nATTORNEY INSTRUCTIONS/CONTEXT:\n{additional_context}"
-
-    # Determine system prompt: strict (with legal sources) or original
-    if jurisdiction and legal_context_text is not None:
-        system_prompt = build_strict_system_prompt(
-            workflow="Office Action Response Drafting",
-            jurisdiction=jurisdiction,
-            firm_name=firm_name,
-            legal_context_text=legal_context_text,
-            patent_context_text=patent_context_text or "",
-            base_instructions=OA_RESPONSE_SYSTEM_PROMPT,
-        )
-    else:
-        system_prompt = OA_RESPONSE_SYSTEM_PROMPT
-
-    prompt = f"""Patent Title: {patent_title}
-
-Response Strategy: {response_strategy}
-
-Current Claims:
-{claims_text}
-
-Office Action Text:
-{office_action_text[:8000]}
-{context_str}
-
-Please draft a comprehensive, formal response to this Office Action. Include:
-1. A professional header
-2. Address EACH rejection specifically with legal arguments
-3. If strategy is "amend" or "both", propose specific claim amendments
-4. Cite relevant MPEP sections and case law
-5. End with a conclusion requesting allowance"""
-
-    from langchain_core.messages import HumanMessage, SystemMessage
-
-    messages = [
-        SystemMessage(content=system_prompt),
-        HumanMessage(content=prompt),
-    ]
-
-    full_response = []
-    async for chunk in llm.astream(messages):
-        if hasattr(chunk, "content") and chunk.content:
-            full_response.append(chunk.content)
-            yield f"data: {chunk.content}\n\n"
-
-    # Append disclaimer for strict RAG outputs
-    if jurisdiction and legal_context_text is not None:
-        yield f"data: {LEGAL_DISCLAIMER}\n\n"
-
-    yield "data: [DONE]\n\n"
-
-
-# ---------------------------------------------------------------------------
-# Infringement / Risk Analysis (Structured Claim Chart)
-# ---------------------------------------------------------------------------
 
 async def generate_risk_analysis_stream(
-    patent_title: str,
-    claims: List[dict],
-    prior_art: List[dict],
+    target_patent_claims: str,
+    prior_art_results: str,
+    patent_filing_date: str,
     firm_id: uuid.UUID,
     user_id: uuid.UUID,
-    analysis_type: str = "invalidity",
-    product_description: Optional[str] = None,
-    target_claims: Optional[List[int]] = None,
-    rag_context: Optional[str] = None,
-    # Strict RAG parameters
-    jurisdiction: Optional[str] = None,
-    legal_context_text: Optional[str] = None,
-    patent_context_text: Optional[str] = None,
-    firm_name: str = "the firm",
 ) -> AsyncGenerator[str, None]:
-    """
-    Stream a structured risk/infringement/invalidity analysis.
-    Produces element-by-element claim charts.
-    Uses RAG context from pgvector when available.
-    When legal context is provided, enforces strict source-only reasoning.
-    """
-    llm = await _get_llm()
+    prompt = f"""{INVALIDITY_ANALYSIS_SYSTEM_PROMPT}
 
-    claims_text = "\n".join(
-        [f"Claim {c.get('claim_number', c.get('number', '?'))} ({'Independent' if c.get('is_independent') else 'Dependent'}): {c.get('claim_text', c.get('text', ''))}"
-         for c in claims]
-    ) if claims else "No claims available."
+PATENT FILING DATE: {patent_filing_date}
 
-    pa_text = "\n".join(
-        [f"- {p.get('reference_number', p.get('number', 'N/A'))}: {p.get('reference_title', p.get('title', 'Untitled'))} — {p.get('reference_abstract', p.get('abstract', 'No abstract'))[:300]}"
-         for p in prior_art]
-    ) if prior_art else "No prior art references loaded."
+TARGET PATENT CLAIMS:
+{target_patent_claims}
 
-    target = f"Focus on claims: {target_claims}" if target_claims else "Analyze all independent claims"
-
-    if analysis_type == "infringement" and product_description:
-        specific_prompt = f"""
-PRODUCT UNDER ANALYSIS:
-{product_description}
-
-Generate an INFRINGEMENT ANALYSIS with:
-
-1. **EXECUTIVE SUMMARY** — Overall infringement risk (HIGH/MEDIUM/LOW) with confidence percentage
-
-2. **CLAIM CHART** — For each independent claim, map EVERY element against the product:
-
-| Claim Element | Product Feature | Reads On? | Risk Level | Notes |
-|---|---|---|---|---|
-| [exact claim language] | [corresponding product feature or "NOT FOUND"] | Yes/No/Partial | High/Medium/Low | [explanation] |
-
-3. **RISK SCORES** — Per-claim risk assessment:
-- Claim X: XX% infringement risk — [one-line rationale]
-
-4. **DESIGN-AROUND OPTIONS** — For high-risk claims, suggest specific modifications to avoid infringement
-
-5. **RECOMMENDED ACTIONS** — Ranked by priority
+PRIOR ART FOUND:
+{prior_art_results}
 """
-    elif analysis_type == "invalidity":
-        specific_prompt = f"""
-Generate an INVALIDITY ANALYSIS with:
-
-1. **EXECUTIVE SUMMARY** — Overall invalidity strength (STRONG/MODERATE/WEAK) with confidence percentage
-
-2. **CLAIM CHARTS** — For each independent claim, map elements against prior art:
-
-| Claim Element | Prior Art Reference | Disclosure Location | Anticipates? |
-|---|---|---|---|
-| [exact claim language] | [reference number + title] | [column/line or paragraph] | §102/§103/Neither |
-
-3. **INVALIDITY SCORES** — Per-claim assessment:
-- Claim X: XX% likely invalid — [one-line rationale]
-
-4. **BEST COMBINATIONS** — For §103 (obviousness), which references to combine and why
-
-5. **GAPS** — Elements NOT found in prior art (potential strengths of the patent)
-"""
-    else:  # freedom-to-operate
-        specific_prompt = f"""
-Generate a FREEDOM TO OPERATE analysis with:
-
-1. **EXECUTIVE SUMMARY** — Overall FTO risk assessment
-
-2. **BLOCKING PATENTS** — Which claims could block operations, with risk levels
-
-3. **CLAIM CHARTS** — Element mapping for blocking claims
-
-4. **RISK MITIGATION** — Design-around options, licensing recommendations
-
-5. **FTO SCORE** — Overall freedom to operate score (0-100)
-"""
-
-    # Include RAG-retrieved context if available
-    rag_section = ""
-    if rag_context:
-        rag_section = f"\n\nRETRIEVED PATENT CONTEXT (from pgvector semantic search):\n{rag_context}\n\nIMPORTANT: Base your analysis on the retrieved context above. Cite specific passages with page numbers when available."
-
-    prompt = f"""Patent: {patent_title}
-Analysis Type: {analysis_type.upper()}
-{target}
-
-CLAIMS UNDER ANALYSIS:
-{claims_text}
-
-PRIOR ART REFERENCES:
-{pa_text}
-{rag_section}
-
-{specific_prompt}
-
-Be thorough and precise. Use proper legal terminology. Cite specific claim elements by quoting them."""
-
-    from langchain_core.messages import HumanMessage, SystemMessage
-
-    system = f"You are an expert patent litigator and invalidity analyst conducting a {analysis_type} analysis. Produce a structured, court-ready report. When retrieved patent context is provided, cite it with page numbers."
-
-    # 1. Try cache
-    cached = await cache_service.get_llm_response(prompt)
-    if cached:
-        yield f"data: {cached}\n\n"
-        yield "data: [DONE]\n\n"
-        return
-
-    # Determine system prompt: strict or original
-    base_risk_instructions = f"""You are an expert patent litigator conducting a {analysis_type} analysis. 
-        
-        CRITICAL LEGAL SAFETY RULES:
-        1. NEVER state that a product "infringes" or a patent is "invalid". Use neutral language like "the evidence appears to demonstrate elements of".
-        2. EXACT CITATION: Every mapping MUST cite the exact claim language in quotes.
-        3. DEFENSIVE FOCUS: Explicitly identify 'Non-Infringement Arguments' or 'Differences' where elements are NOT found.
-        """
-
-    if jurisdiction and legal_context_text is not None:
-        system_prompt = build_strict_system_prompt(
-            workflow=f"{analysis_type.title()} Analysis",
-            jurisdiction=jurisdiction,
-            firm_name=firm_name,
-            legal_context_text=legal_context_text,
-            patent_context_text=patent_context_text or "",
-            base_instructions=base_risk_instructions,
-        )
-    else:
-        system_prompt = base_risk_instructions
-
-    messages = [
-        SystemMessage(content=system_prompt),
-        HumanMessage(content=prompt),
-    ]
-
-    # Stream and accumulate for caching
-    full_response = []
-    async for chunk in llm.astream(messages):
-        if hasattr(chunk, "content") and chunk.content:
-            full_response.append(chunk.content)
-            yield f"data: {chunk.content}\n\n"
-
-    # 3. Cache the result
-    if full_response:
-        await cache_service.set_llm_response(prompt, "".join(full_response))
-
-    # Append disclaimer for strict RAG outputs
-    if jurisdiction and legal_context_text is not None:
-        yield f"data: {LEGAL_DISCLAIMER}\n\n"
-    
-    yield "data: [DONE]\n\n"
-
-
-# ---------------------------------------------------------------------------
-# Prior Art Analysis (Streaming)
-# ---------------------------------------------------------------------------
-
-async def analyze_prior_art_stream(
-    patent_title: str,
-    patent_abstract: str,
-    claims: List[dict],
-    analysis_depth: str = "standard",
-    include_npl: bool = False,
-) -> AsyncGenerator[str, None]:
-    """Stream prior art analysis."""
-    llm = await _get_llm()
-
-    claims_text = "\n".join(
-        [f"Claim {c.get('claim_number', c.get('number', '?'))}: {c.get('claim_text', c.get('text', ''))}"
-         for c in claims]
-    ) if claims else "No claims available."
-
-    prompt = f"""Analyze the following patent for prior art considerations:
-
-Title: {patent_title}
-Abstract: {patent_abstract}
-
-Claims:
-{claims_text}
-
-Analysis Depth: {analysis_depth}
-Include Non-Patent Literature: {include_npl}
-
-Generate a STRUCTURED prior art analysis:
-
-1. **KEY NOVEL FEATURES** — What makes this patent unique
-2. **CLAIM ELEMENT BREAKDOWN** — Each independent claim broken into individual elements
-3. **PRIOR ART SEARCH STRATEGY** — Recommended search queries and CPC codes
-4. **VULNERABILITY ASSESSMENT** — Which claims are most vulnerable and why
-5. **RECOMMENDED SEARCH DATABASES** — USPTO, EPO, WIPO, Google Patents, IEEE, etc.
-"""
-
-    from langchain_core.messages import HumanMessage, SystemMessage
-
-    messages = [
-        SystemMessage(content="You are an expert patent analyst specializing in prior art analysis. Produce a thorough, actionable report."),
-        HumanMessage(content=prompt),
-    ]
-
-    async for chunk in llm.astream(messages):
-        if hasattr(chunk, "content") and chunk.content:
-            yield f"data: {chunk.content}\n\n"
-
-    yield "data: [DONE]\n\n"
-
-
-# ---------------------------------------------------------------------------
-# Due Diligence Report (Streaming + Structured)
-# ---------------------------------------------------------------------------
-
-async def generate_due_diligence_stream(
-    patents: List[dict],
-    licenses: List[dict] = None,
-    context: Optional[str] = None,
-) -> AsyncGenerator[str, None]:
-    """
-    Generate a comprehensive due diligence report for a patent portfolio.
-    """
-    llm = await _get_llm()
-
-    patent_summaries = []
-    for p in patents:
-        claims_info = f", {len(p.get('claims', []))} claims" if p.get("claims") else ""
-        patent_summaries.append(
-            f"• {p.get('patent_number', p.get('application_number', 'N/A'))} — \"{p.get('title', 'Untitled')}\" "
-            f"[Status: {p.get('status', 'unknown')}, Filed: {p.get('filing_date', 'N/A')}, "
-            f"Granted: {p.get('grant_date', 'N/A')}{claims_info}]"
-            f"\n  Abstract: {(p.get('abstract', '') or 'No abstract')[:200]}"
-        )
-
-    license_info = ""
-    if licenses:
-        license_info = "\n\nLICENSED PATENTS:\n" + "\n".join(
-            [f"• {l.get('patent_number', 'N/A')} from {l.get('licensor', 'Unknown')} — expires {l.get('end_date', 'N/A')}"
-             for l in licenses]
-        )
-
-    context_info = f"\n\nADDITIONAL CONTEXT:\n{context}" if context else ""
-
-    prompt = f"""Generate a comprehensive IP DUE DILIGENCE REPORT for this patent portfolio.
-
-PORTFOLIO ({len(patents)} patents):
-{chr(10).join(patent_summaries)}
-{license_info}
-{context_info}
-
-FORMAT YOUR REPORT AS:
-
-# IP DUE DILIGENCE REPORT
-
-## EXECUTIVE SUMMARY
-- Overall portfolio quality score (0-100)
-- Total patents analyzed
-- Key strengths and weaknesses
-- Bottom-line recommendation
-
-## PATENT-BY-PATENT ANALYSIS
-For EACH patent:
-### [Patent Number] — [Title]
-- **Quality Score:** XX/100
-- **Claim Strength:** Strong/Moderate/Weak — [rationale]
-- **Prior Art Risk:** High/Medium/Low — [rationale]
-- **Remaining Life:** XX years (expires YYYY)
-- **Market Relevance:** [assessment]
-- **Recommendation:** [Hold/Divest/License/Strengthen]
-
-## PORTFOLIO RISKS
-- List specific risks with severity ratings
-- License dependencies and expiration concerns
-- Coverage gaps
-
-## PORTFOLIO STRENGTHS
-- Core defensible positions
-- Cross-licensing opportunities
-- Competitive advantages
-
-## VALUATION FACTORS
-- Revenue potential
-- Litigation defensibility
-- Strategic value
-
-## RECOMMENDATIONS
-Numbered, actionable recommendations ranked by priority
-"""
-
-    from langchain_core.messages import HumanMessage, SystemMessage
-
-    messages = [
-        SystemMessage(content="You are a senior IP attorney conducting due diligence for a potential acquisition. Produce a thorough, honest, and actionable report. Assign realistic scores — don't inflate."),
-        HumanMessage(content=prompt),
-    ]
-
-    full_response = []
-    async for chunk in llm.astream(messages):
-        if hasattr(chunk, "content") and chunk.content:
-            full_response.append(chunk.content)
-            yield f"data: {chunk.content}\n\n"
-
-    yield "data: [DONE]\n\n"
+    async for chunk in _stream_response(prompt, firm_id, user_id, "risk_analysis", 0.1):
+        yield chunk

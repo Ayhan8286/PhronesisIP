@@ -48,6 +48,7 @@ class LegalSourceResponse(BaseModel):
     doc_type: str
     title: str
     version: Optional[str]
+    status: str
     is_active: bool
     chunk_count: int
     source_updated_at: Optional[datetime]

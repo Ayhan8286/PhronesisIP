@@ -14,7 +14,7 @@ import {
   Cpu,
   MousePointer2
 } from 'lucide-react';
-import { useAuth } from '@clerk/nextjs';
+import { useAuth } from '@/hooks/useAuth';
 import { apiFetch } from '@/lib/api';
 import { 
   AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer
@@ -53,7 +53,7 @@ interface UsageStat {
 }
 
 export default function AdminDashboard() {
-  const { getToken } = useAuth();
+  const { token } = useAuth();
   const [loading, setLoading] = useState(true);
   const [incidents, setIncidents] = useState<Incident[]>([]);
   const [workflows, setWorkflows] = useState<FailedWorkflow[]>([]);
@@ -64,7 +64,6 @@ export default function AdminDashboard() {
 
   const fetchData = async () => {
     try {
-      const token = await getToken();
       const headers = { Authorization: `Bearer ${token}` };
       
       const [incRes, workRes, econRes, usageRes, growthRes] = await Promise.all([
@@ -96,7 +95,6 @@ export default function AdminDashboard() {
   const handleRetry = async (id: string) => {
     setRetryingIds(prev => new Set(prev).add(id));
     try {
-      const token = await getToken();
       await apiFetch(`/api/v1/admin/workflows/${id}/retry`, { 
         method: 'POST', 
         token: token ?? undefined 

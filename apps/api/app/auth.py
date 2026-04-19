@@ -1,170 +1,128 @@
 """
-Authentication middleware: verifies Clerk JWTs and extracts user context.
+Authentication middleware: verifies local JWTs and extracts user context.
 """
 
 import uuid
+from datetime import datetime, timedelta
 from dataclasses import dataclass
-from typing import Optional
+from typing import Optional, Union
 
-import jwt
-import httpx
+from jose import jwt, JWTError
+from passlib.context import CryptContext
 from fastapi import Depends, HTTPException, Header
-from jwt import PyJWKClient
+from fastapi.security import OAuth2PasswordBearer
 
 from app.config import settings
 
+# Password hashing context
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="api/v1/auth/login", auto_error=False)
 
-# Cache the JWKS client
-_jwks_client: Optional[PyJWKClient] = None
+
+def verify_password(plain_password: str, hashed_password: str) -> bool:
+    """Verify a plain password against a hash."""
+    return pwd_context.verify(plain_password, hashed_password)
 
 
-def get_jwks_client() -> PyJWKClient:
-    global _jwks_client
-    if _jwks_client is None:
-        _jwks_client = PyJWKClient(settings.CLERK_JWKS_URL)
-    return _jwks_client
+def get_password_hash(password: str) -> str:
+    """Generate a hash for a password."""
+    return pwd_context.hash(password)
+
+
+def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
+    """Create a new JWT access token."""
+    to_encode = data.copy()
+    if expires_delta:
+        expire = datetime.utcnow() + expires_delta
+    else:
+        expire = datetime.utcnow() + timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
+    
+    to_encode.update({"exp": expire})
+    encoded_jwt = jwt.encode(to_encode, settings.JWT_SECRET, algorithm=settings.JWT_ALGORITHM)
+    return encoded_jwt
 
 
 @dataclass
 class CurrentUser:
-    """Authenticated user context extracted from Clerk JWT."""
+    """Authenticated user context."""
     id: uuid.UUID
-    clerk_user_id: str
     email: str
     role: str
     is_system_admin: bool = False
     firm_id: Optional[uuid.UUID] = None
-    clerk_org_id: Optional[str] = None
 
 
 async def get_current_user(
-    authorization: str = Header(..., alias="Authorization"),
+    token: Optional[str] = Depends(oauth2_scheme),
+    authorization: Optional[str] = Header(None),
 ) -> CurrentUser:
     """
-    FastAPI dependency: extracts and validates Clerk JWT.
-    Returns a CurrentUser. Firm context is OPTIONAL here to allow global tools.
+    FastAPI dependency: extracts and validates the local JWT.
+    Supports both Authorization header and OAuth2 form token.
     """
-    if not authorization.startswith("Bearer "):
-        raise HTTPException(status_code=401, detail="Invalid authorization header")
+    # 1. Handle fallback from header if OAuth2 scheme didn't pick it up
+    if not token and authorization and authorization.startswith("Bearer "):
+        token = authorization.removeprefix("Bearer ").strip()
 
-    token = authorization.removeprefix("Bearer ").strip()
+    if not token:
+        raise HTTPException(status_code=401, detail="Authentication required")
 
     try:
-        # Get the signing key from Clerk's JWKS endpoint
-        jwks_client = get_jwks_client()
-        signing_key = jwks_client.get_signing_key_from_jwt(token)
-
         # Decode and verify the JWT
         payload = jwt.decode(
             token,
-            signing_key.key,
-            algorithms=["RS256"],
-            issuer=settings.CLERK_ISSUER if settings.CLERK_ISSUER else None,
-            options={
-                "verify_iss": bool(settings.CLERK_ISSUER),
-                "verify_aud": False,  # Clerk doesn't set audience by default
-            },
+            settings.JWT_SECRET,
+            algorithms=[settings.JWT_ALGORITHM]
         )
-    except jwt.ExpiredSignatureError:
-        raise HTTPException(status_code=401, detail="Token has expired")
-    except jwt.InvalidTokenError as e:
+        
+        user_id_str = payload.get("sub")
+        email = payload.get("email")
+        role = payload.get("role", "attorney")
+        firm_id_str = payload.get("firm_id")
+        is_admin = payload.get("is_admin", False)
+
+        if user_id_str is None:
+            raise HTTPException(status_code=401, detail="Invalid token: missing sub")
+
+        return CurrentUser(
+            id=uuid.UUID(user_id_str),
+            email=email or "admin@phronesis.ip",
+            role=role,
+            is_system_admin=is_admin,
+            firm_id=uuid.UUID(firm_id_str) if firm_id_str else None
+        )
+
+    except JWTError as e:
         raise HTTPException(status_code=401, detail=f"Invalid token: {str(e)}")
     except Exception as e:
-        # Catch JWKS fetch failures, network errors, etc.
-        raise HTTPException(status_code=401, detail=f"Authentication failed: {str(e)}")
-
-    # Extract user info from claims
-    clerk_user_id = payload.get("sub")
-    clerk_org_id = payload.get("org_id")
-    org_role = payload.get("org_role", "org:member")
-    email = payload.get("email", "")
-
-    # DIAGNOSTIC: Log the payload to see what's actually coming from Clerk
-    print(f"DEBUG: Auth Payload - User: {clerk_user_id}, Org: {clerk_org_id}, Email: {email}")
-
-    if not clerk_user_id:
-        raise HTTPException(status_code=401, detail="Missing user ID in token")
-
-    # Map Clerk org role to our roles
-    role_map = {
-        "org:admin": "admin",
-        "org:member": "attorney",
-        "org:viewer": "paralegal",
-    }
-    role = role_map.get(org_role, "attorney")
-
-    # In production, lookup the user and firm IDs from the database
-    # For now, use deterministic UUIDs derived from Clerk IDs
-    user_id = uuid.uuid5(uuid.NAMESPACE_URL, f"user:{clerk_user_id}")
-    
-    firm_id = None
-    if clerk_org_id:
-        firm_id = uuid.uuid5(uuid.NAMESPACE_URL, f"firm:{clerk_org_id}")
-    else:
-        # Development fallback: If clerk_org_id is missing, default to the Dev Firm
-        clerk_org_id = "org_000010"
-        firm_id = uuid.UUID("00000000-0000-0000-0000-000000000010")
-
-    # Check if user is a System Admin (Platform Level)
-    # REQUIRE: Management Organization ID
-    is_sys_admin = False
-    if settings.SYSTEM_ADMIN_ORG_ID and clerk_org_id == settings.SYSTEM_ADMIN_ORG_ID:
-        is_sys_admin = True
-
-    return CurrentUser(
-        id=user_id,
-        clerk_user_id=clerk_user_id,
-        email=email,
-        role=role,
-        is_system_admin=is_sys_admin,
-        firm_id=firm_id,
-        clerk_org_id=clerk_org_id,
-    )
+        raise HTTPException(status_code=401, detail="Authentication failed")
 
 
 async def get_active_firm_user(
     user: CurrentUser = Depends(get_current_user),
 ) -> CurrentUser:
-    """
-    Strict dependency for routes that REQUIRE a firm context (e.g., Portfolio, Ingestion).
-    In Dev Mode, missing organizations are forcibly mapped to the Dev Firm so this will safely pass.
-    """
-    if not user.clerk_org_id:
-        raise HTTPException(
-            status_code=403,
-            detail="No organization selected. Please select a firm in the sidebar switcher.",
-        )
+    """Strict dependency for routes that REQUIRE a firm context."""
+    if not user.firm_id:
+        # For this internal tool, we default to the static internal firm
+        user.firm_id = uuid.UUID(settings.STATIC_FIRM_ID)
     return user
 
 
 async def get_system_admin(
     user: CurrentUser = Depends(get_current_user),
 ) -> CurrentUser:
-    """
-    Strict dependency for routes that REQUIRE platform-wide administration rights.
-    """
+    """Strict dependency for routes that REQUIRE administrative rights."""
     if not user.is_system_admin:
-        raise HTTPException(
-            status_code=403,
-            detail="Forbidden: Administrative access required.",
-        )
+        raise HTTPException(status_code=403, detail="Forbidden: Administrative access required")
     return user
 
 
-# Development bypass for testing without Clerk
-class DevUser(CurrentUser):
-    """A test user for development without Clerk."""
-    pass
-
-
 def get_dev_user() -> CurrentUser:
-    """Returns a fake user for development."""
+    """Returns the static admin user for development."""
     return CurrentUser(
-        id=uuid.UUID("00000000-0000-0000-0000-000000000001"),
-        clerk_user_id="dev_user",
-        firm_id=uuid.UUID("00000000-0000-0000-0000-000000000010"),
-        clerk_org_id="org_dev",
-        email="dev@patentiq.com",
+        id=uuid.UUID(settings.STATIC_USER_ID),
+        email="admin@phronesis.ip",
         role="admin",
         is_system_admin=True,
+        firm_id=uuid.UUID(settings.STATIC_FIRM_ID),
     )

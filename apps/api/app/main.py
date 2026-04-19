@@ -12,7 +12,7 @@ from app.database import engine, Base
 from app.routers import (
     auth, patents, portfolio, drafting,
     office_actions, prior_art, search, documents, usage, export, diagnostic,
-    analysis, admin, knowledge_base
+    analysis, admin, knowledge_base, services
 )
 from app.auth import get_current_user, get_dev_user
 
@@ -124,6 +124,7 @@ app.include_router(auth.router, prefix="/api/v1/auth", tags=["Auth"])
 app.include_router(analysis.router, prefix="/api/v1/analysis", tags=["Legal Analysis"])
 app.include_router(admin.router, prefix="/api/v1/admin", tags=["Platform Admin"])
 app.include_router(knowledge_base.router, prefix="/api/v1/knowledge-base", tags=["Legal Knowledge Base"])
+app.include_router(services.router, prefix="/api/v1/public/services", tags=["Public Services"])
 
 if settings.APP_ENV == "development":
     app.include_router(diagnostic.router, prefix="/api/v1/diagnostic", tags=["Diagnostic"])

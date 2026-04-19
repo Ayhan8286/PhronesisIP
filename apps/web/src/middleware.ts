@@ -1,31 +1,32 @@
-import { clerkMiddleware, createRouteMatcher } from "@clerk/nextjs/server";
+import { withAuth } from "next-auth/middleware";
+import { NextResponse } from "next/server";
 
-const isPublicRoute = createRouteMatcher([
-  "/sign-in(.*)",
-  "/sign-up(.*)",
-  "/",
-]);
-
-// Routes that should bypass Clerk middleware entirely (handled by FastAPI backend)
-const isBackendRoute = createRouteMatcher([
-  "/api/v1(.*)",
-  "/api/inngest(.*)",
-]);
-
-export default clerkMiddleware(async (auth, request) => {
-  // Skip Clerk auth for backend API routes — they have their own JWT verification
-  if (isBackendRoute(request)) {
-    return;
+export default withAuth(
+  function middleware(req) {
+    // Already authenticated if this runs, just continue
+    return NextResponse.next();
+  },
+  {
+    callbacks: {
+      authorized: ({ token }) => !!token,
+    },
+    pages: {
+      signIn: "/login",
+    },
   }
-
-  if (!isPublicRoute(request)) {
-    await auth.protect();
-  }
-});
+);
 
 export const config = {
   matcher: [
-    // Match all routes EXCEPT static files, Next.js internals, and backend API routes
-    "/((?!_next|api/v1|api/inngest|[^?]*\\.(?:html?|css|js(?!on)|jpe?g|webp|png|gif|svg|ttf|woff2?|ico|csv|docx?|xlsx?|zip|webmanifest)).*)",
+    /*
+     * Match all request paths except for:
+     * - _next/static, _next/image, favicon.ico (static assets)
+     * - public (root public assets)
+     * - login (auth page)
+     * - api/auth (NextAuth endpoints)
+     * - api/v1/public (Unprotected public API)
+     * - get-started (Public client intake)
+     */
+    "/((?!_next/static|_next/image|favicon.ico|public|login|api/auth|api/v1/public|get-started).*)",
   ],
 };

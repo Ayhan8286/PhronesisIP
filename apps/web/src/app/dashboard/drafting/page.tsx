@@ -50,41 +50,59 @@ export default function DraftingPage() {
     if (!description.trim()) return;
     setGenerating(true);
     setDraftText("");
-    setTrustPanel(null); // Reset trust panel on new run
+    setTrustPanel(null);
 
     try {
-      await api.generateDraft(
-        {
-          description,
-          technical_field: techField,
-          claim_style: claimStyle,
-          spec_context: specContext || undefined,
-          jurisdiction: jurisdiction, // Injects RAG Grounding
-        },
-        (chunk: string) => {
-          // If error stream payload arrives
-          if (chunk.includes('{"error"')) {
-            try {
-               const errPayload = JSON.parse(chunk);
-               if (errPayload.error) {
-                 setDraftText((prev) => prev + "\n[SYSTEM ERROR]: " + errPayload.error + "\n");
-               }
-            } catch {}
-          } else {
-             setDraftText((prev) => prev + chunk);
+      // 1. Start the job
+      const draft = await api.generateDraft({
+        description,
+        technical_field: techField,
+        claim_style: claimStyle,
+        spec_context: specContext || undefined,
+        jurisdiction: jurisdiction,
+      });
+
+      setDraftText("# Generation Started...\nInternal Job ID: " + draft.id);
+
+      // 2. Start Polling
+      let attempts = 0;
+      const pollInterval = setInterval(async () => {
+        attempts++;
+        try {
+          const updatedDraft = await api.getDraft(draft.id);
+          
+          if (updatedDraft.status === "completed") {
+            clearInterval(pollInterval);
+            setGenerating(false);
+            setDraftText(updatedDraft.content);
+            
+            // If validation issues exist, show them (Layer 3)
+            if (updatedDraft.draft_metadata?.validation) {
+                setTrustPanel({
+                    jurisdiction: jurisdiction,
+                    validation: updatedDraft.draft_metadata.validation
+                });
+            }
+
+            // Refresh list
+            api.listDrafts().then(setDrafts).catch(console.error);
+          } else if (updatedDraft.status === "failed") {
+            clearInterval(pollInterval);
+            setGenerating(false);
+            setDraftText("[ERROR]: AI generation failed. This usually happens if the input is too long for the context window or an API limit was hit.");
           }
-          if (outputRef.current) outputRef.current.scrollTop = outputRef.current.scrollHeight;
-        },
-        () => {
-          setGenerating(false);
-          // Refresh drafts list
-          api.listDrafts().then(setDrafts).catch(console.error);
-        },
-        (sourcesData: any) => {
-          // Bind strict RAG metadata directly to Trust Panel
-          setTrustPanel(sourcesData);
+          
+          // Safety timeout (5 minutes)
+          if (attempts > 100) {
+            clearInterval(pollInterval);
+            setGenerating(false);
+            setDraftText("[TIMEOUT]: Generation is taking longer than expected. Check the 'Your Drafts' list later; it may still complete in the background.");
+          }
+        } catch (err) {
+            console.error("Polling error:", err);
         }
-      );
+      }, 3000); // Poll every 3 seconds
+
     } catch (err: unknown) {
       alert(getErrorMessage(err));
       setGenerating(false);
@@ -183,24 +201,65 @@ export default function DraftingPage() {
           </div>
         </div>
 
-        {/* TRUST PANEL (RAG Grounding Metadata) */}
+        {/* TRUST PANEL (RAG Grounding & Expert Validation Metadata) */}
         {trustPanel && (
-          <div className="card" style={{ marginBottom: 24, padding: 16, borderLeft: "4px solid var(--success)", background: "rgba(16, 185, 129, 0.05)" }}>
+          <div className="card" style={{ 
+            marginBottom: 24, padding: 16, 
+            borderLeft: `4px solid ${trustPanel.validation?.is_valid ? "var(--success)" : "var(--warning)"}`, 
+            background: trustPanel.validation?.is_valid ? "rgba(16, 185, 129, 0.05)" : "rgba(245, 158, 11, 0.05)" 
+          }}>
             <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
-              <div style={{ width: 8, height: 8, borderRadius: 4, background: "var(--success)" }} />
-              <h4 style={{ margin: 0, fontSize: 14, fontWeight: 600, color: "var(--success)" }}>Strict {trustPanel.jurisdiction} Legal Grounding Active</h4>
+              <div style={{ 
+                width: 8, height: 8, borderRadius: 4, 
+                background: trustPanel.validation?.is_valid ? "var(--success)" : "var(--warning)" 
+              }} />
+              <h4 style={{ 
+                margin: 0, fontSize: 14, fontWeight: 600, 
+                color: trustPanel.validation?.is_valid ? "var(--success)" : "var(--warning)" 
+              }}>
+                {trustPanel.validation?.is_valid ? "Expert System: Valid USPTO Structure" : "Expert System: Issues Detected"}
+              </h4>
             </div>
-            <p style={{ fontSize: 13, color: "var(--text-secondary)", marginBottom: 8 }}>
-              This draft was generated using {trustPanel?.sources_used?.length || 0} legally validated chunks from your Knowledge Base.
-            </p>
-            {trustPanel?.sources_used?.length > 0 && (
-              <ul style={{ fontSize: 12, color: "var(--text-primary)", paddingLeft: 20, margin: 0 }}>
-                {trustPanel.sources_used.map((src: any, idx: number) => (
-                  <li key={idx} style={{ marginBottom: 4 }}>
-                    <strong>{src.source_title}</strong> {src.section ? `(${src.section})` : ""} - Relevance: {(src.score * 100).toFixed(1)}%
-                  </li>
-                ))}
-              </ul>
+            
+            {trustPanel.validation && (
+              <div style={{ marginBottom: 16 }}>
+                <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 8, color: "var(--text-primary)" }}>
+                  Claim Quality Report (Layer 3 Validation)
+                </div>
+                {trustPanel.validation.issues.length === 0 ? (
+                  <p style={{ fontSize: 13, color: "var(--text-secondary)" }}>✓ No § 112 structural errors detected.</p>
+                ) : (
+                  <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                    {trustPanel.validation.issues.map((issue: any, idx: number) => (
+                      <div key={idx} style={{ 
+                        fontSize: 12, padding: 8, borderRadius: 4, 
+                        background: issue.level === "ERROR" ? "rgba(239, 68, 68, 0.1)" : "rgba(245, 158, 11, 0.1)",
+                        border: `1px solid ${issue.level === "ERROR" ? "rgba(239, 68, 68, 0.2)" : "rgba(245, 158, 11, 0.2)"}`
+                      }}>
+                        <div style={{ fontWeight: 600, color: issue.level === "ERROR" ? "var(--error)" : "var(--warning)", marginBottom: 2 }}>
+                          {issue.rejection_statute}: {issue.message}
+                        </div>
+                        <div style={{ color: "var(--text-secondary)" }}>Suggestion: {issue.suggestion}</div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {trustPanel.sources_used && (
+                <>
+                <p style={{ fontSize: 13, color: "var(--text-secondary)", marginBottom: 8 }}>
+                Jurisdiction: {trustPanel.jurisdiction} | Sources Used: {trustPanel.sources_used.length}
+                </p>
+                <ul style={{ fontSize: 12, color: "var(--text-primary)", paddingLeft: 20, margin: 0 }}>
+                    {trustPanel.sources_used.map((src: any, idx: number) => (
+                    <li key={idx} style={{ marginBottom: 4 }}>
+                        <strong>{src.source_title}</strong> {src.section ? `(${src.section})` : ""}
+                    </li>
+                    ))}
+                </ul>
+                </>
             )}
           </div>
         )}

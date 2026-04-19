@@ -10,16 +10,211 @@ import json
 
 from app.services.inngest_client import inngest_client
 from app.services.embeddings import chunk_patent_text, generate_document_embeddings
-from app.models import Patent, PatentEmbedding, PublicPatentCache, OfficeAction
+from app.services.storage import upload_to_r2, download_from_r2
+from app.models import Patent, PatentEmbedding, PublicPatentCache, OfficeAction, Draft, Firm
 from app.database import async_session_factory
 from app.services.deadlines import deadline_service
 from app.services.family import family_service
 from app.services.alerts import alert_service
 from app.services.patent_fetcher import patent_fetcher
-from app.services.llm import generate_risk_analysis_stream, generate_patent_summary
+from app.services.llm import generate_patent_draft_stream, generate_patent_summary, generate_risk_analysis_stream
+from app.services.validator import validate_claims
 from app.services.analysis_export import analysis_export_service
 from app.models.analysis import AnalysisWorkflow, ClaimAnalysisResult, ProductDescription
-from sqlalchemy import text, select
+from app.models.legal_source import LegalSource, LegalSourceChunk
+from app.services.legal_kb import chunk_legal_text
+from app.services.document import extract_pdf_text
+from sqlalchemy import text, select, func
+
+
+@inngest_client.create_function(
+    fn_id="generate_patent_draft",
+    trigger=inngest.TriggerEvent(event="patent.draft.generate"),
+    retries=2,
+)
+async def generate_patent_draft_job(ctx: inngest.Context, step: inngest.Step) -> dict:
+    \"\"\"
+    Expert Patent Drafting Job.
+    1. Retrieves context (Legal + Patent).
+    2. Calls Expert LLM.
+    3. Validates results (Layer 3).
+    4. Updates DB.
+    \"\"\"
+    from app.config import settings
+    
+    data = ctx.event.data
+    draft_id = uuid.UUID(data["draft_id"])
+    firm_id = uuid.UUID(data["firm_id"])
+    user_id = uuid.UUID(data["user_id"])
+    
+    # 1. Retrieve Context
+    async def get_context():
+        async with async_session_factory() as db:
+            legal_context = ""
+            if data.get("jurisdiction"):
+                from app.services.ingestion import retrieve_full_context
+                patent_id = uuid.UUID(data["patent_id"]) if data.get("patent_id") else None
+                context_res = await retrieve_full_context(
+                    query=data["invention_description"][:500],
+                    jurisdiction=data["jurisdiction"],
+                    firm_id=firm_id,
+                    user_id=user_id,
+                    db=db,
+                    patent_id=patent_id
+                )
+                legal_context = context_res["legal_context_text"]
+            return legal_context
+
+    legal_context_text = await step.run("retrieve_context", get_context)
+
+    # 2. Call Expert LLM
+    async def run_llm():
+        full_text = ""
+        async for chunk in generate_patent_draft_stream(
+            invention_description=data["invention_description"],
+            technical_field=data.get("technical_field", ""),
+            firm_id=firm_id,
+            user_id=user_id,
+            legal_context_text=legal_context_text,
+            spec_context=data.get("spec_context", "")
+        ):
+            if chunk.startswith("data: ") and not "[DONE]" in chunk:
+                full_text += chunk[6:]
+        return full_text
+
+    draft_content = await step.run("generate_draft_content", run_llm)
+
+    # 3. Validate (Layer 3)
+    def do_validation():
+        return validate_claims(draft_content)
+
+    validation_report = await step.run("validate_draft", do_validation)
+
+    # 4. Save to DB
+    async def save_result():
+        async with async_session_factory() as db:
+            draft = await db.get(Draft, draft_id)
+            if draft:
+                draft.content = draft_content
+                draft.status = "completed"
+                draft.draft_metadata = {
+                    "validation": validation_report,
+                    "model": settings.LLM_MODEL,
+                    "expert_applied": True
+                }
+                db.add(draft)
+                await db.commit()
+            return True
+
+    await step.run("save_to_db", save_result)
+
+    return {"status": "success", "draft_id": str(draft_id)}
+
+
+@inngest_client.create_function(
+    fn_id="generate_oa_response",
+    trigger=inngest.TriggerEvent(event="patent.oa.response.generate"),
+    retries=2,
+)
+async def generate_oa_response_job(ctx: inngest.Context, step: inngest.Step) -> dict:
+    """
+    Expert OA Response Job.
+    1. Loads OA text, claims, and cited references.
+    2. Calls Expert LLM.
+    3. Updates DB.
+    """
+    from app.models import OAResponseDraft, OfficeAction, PatentClaim, PriorArtReference
+    from app.services.llm import generate_oa_response_stream
+    
+    data = ctx.event.data
+    draft_id = uuid.UUID(data["draft_id"])
+    oa_id = uuid.UUID(data["oa_id"])
+    firm_id = uuid.UUID(data["firm_id"])
+    user_id = uuid.UUID(data["user_id"])
+
+    # 1. Load context from DB
+    async def get_oa_context():
+        async with async_session_factory() as db:
+            oa = await db.get(OfficeAction, oa_id)
+            if not oa: return None
+            
+            # Claims
+            claims_res = await db.execute(
+                select(PatentClaim).where(PatentClaim.patent_id == oa.patent_id).order_by(PatentClaim.claim_number)
+            )
+            claims_text = "\n".join([f"Claim {c.claim_number}: {c.claim_text}" for c in claims_res.scalars().all()])
+            
+            # Cited Refs (Prior Art)
+            refs_res = await db.execute(
+                select(PriorArtReference).where(
+                    PriorArtReference.patent_id == oa.patent_id, 
+                    PriorArtReference.cited_by_examiner == True
+                )
+            )
+            refs_text = "\n".join([f"Ref: {r.reference_number} ({r.reference_title})\nAbstract: {r.reference_abstract}" for r in refs_res.scalars().all()])
+            
+            # Legal context if jurisdiction provided
+            legal_context_text = ""
+            if data.get("jurisdiction"):
+                from app.services.ingestion import retrieve_full_context
+                context_res = await retrieve_full_context(
+                    query=f"Response to OA for {oa.patent_id}",
+                    jurisdiction=data["jurisdiction"],
+                    firm_id=firm_id,
+                    user_id=user_id,
+                    db=db,
+                    patent_id=oa.patent_id
+                )
+                legal_context_text = context_res["legal_context_text"]
+
+            return {
+                "oa_text": oa.extracted_text,
+                "claims_text": claims_text,
+                "refs_text": refs_text,
+                "legal_context_text": legal_context_text
+            }
+
+    context = await step.run("load_oa_context", get_oa_context)
+    if not context: return {"status": "error", "message": "OA not found"}
+
+    # 2. Call Expert LLM
+    async def run_llm():
+        full_text = ""
+        async for chunk in generate_oa_response_stream(
+            office_action_text=context["oa_text"],
+            cited_patent_texts=context["refs_text"],
+            current_claims=context["claims_text"],
+            firm_id=firm_id,
+            user_id=user_id,
+            legal_context_text=context["legal_context_text"]
+        ):
+            if chunk.startswith("data: ") and not "[DONE]" in chunk:
+                full_text += chunk[6:]
+        return full_text
+
+    response_content = await step.run("generate_response_content", run_llm)
+
+    # 3. Save to DB
+    async def save_result():
+        async with async_session_factory() as db:
+            draft = await db.get(OAResponseDraft, draft_id)
+            if draft:
+                draft.draft_content = response_content
+                draft.status = "completed"
+                db.add(draft)
+                
+                # Also update OA status
+                oa = await db.get(OfficeAction, oa_id)
+                if oa:
+                    oa.status = "responded"
+                    db.add(oa)
+                    
+                await db.commit()
+            return True
+
+    await step.run("save_to_db", save_result)
+
+    return {"status": "success", "draft_id": str(draft_id)}
 
 
 @inngest_client.create_function(
@@ -417,16 +612,14 @@ async def run_legal_analysis(ctx: inngest.Context, step: inngest.Step) -> dict:
                     pd = pd_res.scalar_one_or_none()
                     product_desc = pd.description_text if pd else ""
 
-                # Call LLM for element mapping
+                # Call LLM for expert analysis
                 full_text_response = ""
                 async for chunk_data in generate_risk_analysis_stream(
-                    patent_title=deep_data.get("title", ""),
-                    claims=[claim],
-                    prior_art=[], 
+                    target_patent_claims=claim["text"],
+                    prior_art_results=f"Product Evidence: {product_desc}",
+                    patent_filing_date=str(patent.get("filing_date", "Unknown")),
                     firm_id=workflow.firm_id,
-                    user_id=workflow.created_by,
-                    analysis_type=workflow.analysis_type,
-                    product_description=product_desc
+                    user_id=workflow.created_by
                 ):
                     if chunk_data.startswith("data: ") and not "[DONE]" in chunk_data:
                         full_text_response += chunk_data[6:]
@@ -648,3 +841,112 @@ async def platform_uptime_watchdog(ctx: inngest.Context):
         detail = f"Database connectivity failed during watchdog ping: {str(e)}"
         await alert_service.dispatch_outage_alert(detail)
         return {"status": "critical", "error": str(e)}
+
+
+@inngest_client.create_function(
+    fn_id="process_legal_source",
+    trigger=inngest.TriggerEvent(event="legal.source.ingest"),
+    retries=3,
+)
+async def process_legal_source(ctx: inngest.Context, step: inngest.Step) -> dict:
+    """
+    Background job to safely embed large legal documents (e.g. MPEP).
+    Handles chunking and throttled embedding generation to respect Voyage AI limits.
+    """
+    source_id_str = ctx.event.data["source_id"]
+    firm_id_str = ctx.event.data["firm_id"]
+    user_id_str = ctx.event.data["user_id"]
+    # We now fetch via R2 to handle multi-MB PDFs (MPEP is ~10-15MB)
+    
+    source_id = uuid.UUID(source_id_str)
+    firm_id = uuid.UUID(firm_id_str) if firm_id_str else None
+    user_id = uuid.UUID(user_id_str)
+
+    # 1. Fetch Source Meta and Download from R2
+    async def fetch_and_download():
+        async with async_session_factory() as db:
+            source = await db.get(LegalSource, source_id)
+            if not source or not source.r2_key:
+                raise ValueError(f"Source {source_id} or R2 key not found")
+            
+            from app.services.storage import download_from_r2
+            pdf_bytes = await download_from_r2(source.r2_key)
+            full_text = extract_pdf_text(pdf_bytes)
+            if not full_text:
+                raise ValueError("Could not extract text from PDF")
+            return chunk_legal_text(full_text, max_tokens=300, overlap=30)
+
+    chunks = await step.run("fetch_and_chunk", fetch_and_download)
+
+    # 2. Embeddings with Strict Throttling (Voyage Free Tier: 10k tokens/min)
+    # Batch size of 25 chunks @ ~300 tokens each = ~7,500 tokens.
+    BATCH_SIZE = 25
+    all_embeddings = []
+
+    for i in range(0, len(chunks), BATCH_SIZE):
+        batch_chunks = chunks[i : i + BATCH_SIZE]
+        batch_texts = [c["text"] for c in batch_chunks]
+
+        async def do_embed():
+            return await generate_document_embeddings(
+                batch_texts, 
+                firm_id=firm_id or uuid.UUID(int=0), 
+                user_id=user_id,
+                workflow="background_legal_ingestion"
+            )
+
+        batch_embeddings = await step.run(f"embed_batch_{i}", do_embed)
+        all_embeddings.extend(batch_embeddings)
+
+        # Stay under 10k tokens per minute: sleep 60s after each batch
+        if i + BATCH_SIZE < len(chunks):
+            await step.sleep(f"rate_limit_pause_{i}", "60s")
+
+    # 3. Save to Database
+    async def do_db_save():
+        async with async_session_factory() as db:
+            # Delete old chunks
+            await db.execute(
+                text("DELETE FROM legal_source_chunks WHERE source_id = :sid"),
+                {"sid": str(source_id)},
+            )
+
+            # Insert new chunks
+            for idx, (chunk, embedding) in enumerate(zip(chunks, all_embeddings)):
+                await db.execute(
+                    text("""
+                        INSERT INTO legal_source_chunks
+                            (id, source_id, firm_id, chunk_text, chunk_index,
+                             section, page_number, embedding)
+                        VALUES
+                            (:id, :source_id, :firm_id, :chunk_text, :chunk_index,
+                             :section, :page_number, CAST(:embedding AS vector))
+                    """),
+                    {
+                        "id": str(uuid.uuid4()),
+                        "source_id": str(source_id),
+                        "firm_id": str(firm_id) if firm_id else None,
+                        "chunk_text": chunk["text"],
+                        "chunk_index": idx,
+                        "section": chunk.get("section", ""),
+                        "page_number": chunk.get("page_number", 1),
+                        "embedding": str(embedding),
+                    },
+                )
+            
+            # Update source status to active
+            await db.execute(
+                text("UPDATE legal_sources SET status = 'active', chunk_count = :count, updated_at = NOW() WHERE id = :sid"),
+                {"count": len(chunks), "sid": str(source_id)},
+            )
+            
+            await db.commit()
+            return True
+
+    await step.run("save_to_database", do_db_save)
+
+    return {
+        "status": "success",
+        "source_id": source_id_str,
+        "chunks_indexed": len(chunks)
+    }

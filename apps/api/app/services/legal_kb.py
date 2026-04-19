@@ -252,6 +252,7 @@ async def retrieve_legal_context(
         WHERE ls.jurisdiction = :jurisdiction
           AND (ls.firm_id = :firm_id OR ls.firm_id IS NULL)
           AND ls.is_active = true
+          AND ls.status = 'active'
           AND 1 - (lsc.embedding <=> CAST(:query_embedding AS vector)) > :threshold
         ORDER BY lsc.embedding <=> CAST(:query_embedding AS vector)
         LIMIT :top_k

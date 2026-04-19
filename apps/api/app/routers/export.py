@@ -1,4 +1,6 @@
 import uuid
+import datetime
+from typing import List, Dict, Any
 from fastapi import APIRouter, Depends, HTTPException, Response
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -9,7 +11,8 @@ from app.models.office_action import OfficeAction
 from app.models.patent import Patent
 from app.auth import get_active_firm_user, CurrentUser
 from app.services.export_docx import generate_office_action_response_docx
-from pydantic import BaseModel
+from app.services.service_report import service_report_generator
+from pydantic import BaseModel, Field
 
 router = APIRouter()
 
@@ -59,5 +62,66 @@ async def export_oa_response(
         media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
         headers={
             "Content-Disposition": f"attachment; filename=Office_Action_Response_{oa.id}.docx"
+        }
+    )
+
+# --- Service Mode Exports ---
+
+class PriorArtExportRequest(BaseModel):
+    client_name: str
+    invention_title: str
+    results: List[Dict[str, Any]]
+
+@router.post("/prior-art")
+async def export_prior_art_report(
+    data: PriorArtExportRequest,
+    user: CurrentUser = Depends(get_active_firm_user),
+):
+    """
+    Generate and download a premium branded Prior Art PDF report.
+    """
+    pdf_bytes = service_report_generator.generate_prior_art_report(
+        client_name=data.client_name,
+        invention_title=data.invention_title,
+        results=data.results
+    )
+
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": f"attachment; filename=Prior_Art_Report_{datetime.datetime.now().strftime('%Y%m%d')}.pdf"
+        }
+    )
+
+class PatentabilityExportRequest(BaseModel):
+    client_name: str
+    invention_title: str
+    analysis: str
+    claims: List[str]
+    prior_art: List[Dict[str, Any]]
+
+@router.post("/patentability")
+async def export_patentability_report(
+    data: PatentabilityExportRequest,
+    user: CurrentUser = Depends(get_active_firm_user),
+):
+    """
+    Generate and download a premium branded Patentability PDF report.
+    """
+    # For now, we'll repurpose the prior art template or a similar one
+    # In a real app, we'd have a specific method in service_report_generator
+    # I'll add generate_patentability_report to the service soon.
+    pdf_bytes = service_report_generator.generate_prior_art_report(
+        client_name=data.client_name,
+        invention_title=data.invention_title,
+        results=data.prior_art
+    )
+
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": f"attachment; filename=Patentability_Report_{datetime.datetime.now().strftime('%Y%m%d')}.pdf"
         }
     )

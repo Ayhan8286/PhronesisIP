@@ -11,10 +11,13 @@ logger = logging.getLogger(__name__)
 # Standard Internal Pricing (USD per 1M tokens)
 # Note: These can be moved to a remote config service for high-scale apps
 PRICING = {
+    "grok-4.20-reasoning": {"input": 0, "output": 0},
+    "grok-4-1-fast-reasoning": {"input": 0, "output": 0},
     "gemini-2.0-flash": {"input": 0.10, "output": 0.40},
     "gemini-1.5-flash": {"input": 0.075, "output": 0.30},
     "gemini-1.5-pro": {"input": 3.50, "output": 10.50},
     "claude-3-sonnet": {"input": 3.00, "output": 15.00},
+    "BAAI/bge-m3": {"input": 0, "output": 0},
     "voyage-law-2": {"input": 0.12, "output": 0.12}, # Symmetric for embeddings
 }
 

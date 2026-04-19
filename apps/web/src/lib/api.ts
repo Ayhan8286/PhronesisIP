@@ -177,6 +177,19 @@ export interface Draft {
   ai_model_used: string | null;
   version: number;
   status: string;
+  draft_metadata?: {
+    validation?: {
+      is_valid: boolean;
+      issues: Array<{
+        level: "ERROR" | "WARNING";
+        message: string;
+        rejection_statute: string;
+        suggestion: string;
+      }>;
+    };
+    expert_applied?: boolean;
+    model?: string;
+  };
   created_at: string;
   updated_at: string;
 }
@@ -278,11 +291,14 @@ export const createApi = (token?: string) => ({
   getOverview: () => apiFetch<PortfolioOverview>("/api/v1/portfolio/overview", { token }),
   listFamilies: () => apiFetch<PatentFamily[]>("/api/v1/portfolio/families", { token }),
 
-  // Office Actions
-  listOfficeActions: () => apiFetch<OfficeAction[]>("/api/v1/office-actions/", { token }),
-
   // Drafts
   listDrafts: () => apiFetch<Draft[]>("/api/v1/drafting/", { token }),
+  getDraft: (id: string) => apiFetch<Draft>(`/api/v1/drafting/${id}`, { token }),
+
+  // Office Actions
+  listOfficeActions: () => apiFetch<OfficeAction[]>("/api/v1/office-actions/", { token }),
+  getOAResponseDraft: (oaId: string, draftId: string) => 
+    apiFetch<Draft>(`/api/v1/office-actions/${oaId}/drafts/${draftId}`, { token }),
 
   // Local Search
   searchPatents: (query: string, type = "hybrid", topK = 20) =>
@@ -382,12 +398,20 @@ export const createApi = (token?: string) => ({
       { token }
     ),
 
-  // AI Streaming (with strict RAG support)
-  generateDraft: (body: object, onChunk: (t: string) => void, onDone?: () => void, onSources?: (data: any) => void) =>
-    apiStream("/api/v1/drafting/generate", body, onChunk, onDone, token, onSources),
+  // AI Jobs (Async)
+  generateDraft: (body: object) =>
+    apiFetch<Draft>("/api/v1/drafting/generate", {
+      method: "POST",
+      body: JSON.stringify(body),
+      token,
+    }),
 
-  generateOAResponse: (oaId: string, body: object, onChunk: (t: string) => void, onDone?: () => void, onSources?: (data: any) => void) =>
-    apiStream(`/api/v1/office-actions/${oaId}/generate-response`, body, onChunk, onDone, token, onSources),
+  generateOAResponse: (oaId: string, body: object) =>
+    apiFetch<Draft>(`/api/v1/office-actions/${oaId}/generate-response`, {
+      method: "POST",
+      body: JSON.stringify(body),
+      token,
+    }),
 
   runRiskAnalysis: (body: object, onChunk: (t: string) => void, onDone?: () => void, onSources?: (data: any) => void) =>
     apiStream("/api/v1/prior-art/risk-analysis", body, onChunk, onDone, token, onSources),
@@ -469,6 +493,34 @@ export const createApi = (token?: string) => ({
       is_stale: boolean;
       oldest_source_date: string | null;
     }>(`/api/v1/knowledge-base/jurisdictions/${code}/status`, { token }),
+    
+  exportPriorArtReport: async (data: { client_name: string; invention_title: string; results: any[] }) => {
+    const url = `${API_URL}/api/v1/export/prior-art`;
+    const res = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      body: JSON.stringify(data),
+    });
+    if (!res.ok) throw new Error("Export failed");
+    return res.blob();
+  },
+
+  exportPatentabilityReport: async (data: { client_name: string; invention_title: string; analysis: string; claims: string[]; prior_art: any[] }) => {
+    const url = `${API_URL}/api/v1/export/patentability`;
+    const res = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      body: JSON.stringify(data),
+    });
+    if (!res.ok) throw new Error("Export failed");
+    return res.blob();
+  },
 });
 
 // Original api object kept for compatibility with any existing static imports, but empty/null token

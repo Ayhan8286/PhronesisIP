@@ -99,117 +99,58 @@ async def update_draft(
     return DraftResponse.model_validate(draft)
 
 
-@router.post("/generate")
+@router.post("/generate", response_model=DraftResponse)
 async def generate_draft(
     data: DraftGenerationRequest,
     db: AsyncSession = Depends(get_db),
     user: CurrentUser = Depends(get_active_firm_user),
 ):
     """
-    AI-generate a patent application draft.
-    Returns a streamed response for real-time display.
-
-    When jurisdiction is provided, enables STRICT LEGAL RAG:
-    - Retrieves relevant legal authority from the Legal Knowledge Base
-    - Forbids the LLM from using general training knowledge
-    - Enforces [Source: ...] citations on every legal claim
-    - Sends [SOURCES] metadata event for the UI trust panel
+    AI-generate a patent application draft via background job.
+    Returns the Draft object immediately. The frontend should poll or listen for completion.
     """
-    # Handle both field names from frontend
     description = data.invention_description or data.description or ""
     if not description.strip():
-        from fastapi import HTTPException
         raise HTTPException(status_code=400, detail="Invention description is required")
 
-    # Strict RAG: perform dual retrieval when jurisdiction is specified
-    legal_context_text = None
-    patent_context_text = None
-    sources_metadata = None
-    firm_name = "the firm"
-
-    if data.jurisdiction:
-        from app.services.ingestion import retrieve_full_context
-        from app.models import Firm
-
-        # Get firm name for the prompt
-        firm_result = await db.execute(
-            select(Firm.name).where(Firm.id == user.firm_id)
-        )
-        firm_row = firm_result.first()
-        if firm_row:
-            firm_name = firm_row.name
-
-        patent_id = uuid.UUID(data.patent_id) if data.patent_id else None
-
-        context = await retrieve_full_context(
-            query=description[:500],  # Use first 500 chars as query
-            jurisdiction=data.jurisdiction,
-            firm_id=user.firm_id,
-            user_id=user.id,
-            db=db,
-            patent_id=patent_id,
-        )
-
-        legal_context_text = context["legal_context_text"]
-        patent_context_text = context["patent_context_text"]
-        sources_metadata = {
-            "sources_used": context["sources_used"],
-            "has_legal_authority": context["has_legal_authority"],
-            "jurisdiction": context["jurisdiction"],
-        }
-
-    import json as json_lib
-    from app.services.citation_validator import validate_citations
-
-    async def wrapped_stream():
-        full_response_parts = []
-
-        try:
-            async for chunk in generate_patent_draft_stream(
-                invention_description=description,
-                technical_field=data.technical_field,
-                prior_art_context=data.prior_art_context,
-                claim_style=data.claim_style,
-                spec_context=data.spec_context,
-                firm_id=user.firm_id,
-                user_id=user.id,
-                jurisdiction=data.jurisdiction,
-                legal_context_text=legal_context_text,
-                patent_context_text=patent_context_text,
-                firm_name=firm_name,
-            ):
-                # Collect full response for citation validation
-                if chunk.startswith("data: ") and chunk.strip() not in ("data: [DONE]",):
-                    full_response_parts.append(chunk[6:].strip())
-                yield chunk
-
-            # After stream completes, send citation validation + sources metadata
-            if data.jurisdiction and sources_metadata:
-                full_text = "".join(full_response_parts)
-                validation = validate_citations(
-                    full_text,
-                    sources_metadata.get("sources_used", []),
-                )
-                sources_event = {
-                    **sources_metadata,
-                    "citation_validation": dict(validation),
-                }
-                yield f"data: [SOURCES]{json_lib.dumps(sources_event)}\n\n"
-        except Exception as e:
-            import logging
-            logging.error(f"Streaming Draft Error: {e}")
-            error_msg = str(e)
-            if "leaked" in error_msg.lower() or "403" in error_msg:
-                error_msg = "Your GEMINI_API_KEY was reported as publicly leaked and has been permanently disabled by Google. Please generate a fresh API key in Google AI Studio and update your environment variables."
-            
-            error_json = json_lib.dumps({"error": error_msg})
-            yield f"data: {error_json}\n\n"
-            yield "data: [DONE]\n\n"
-
-    return StreamingResponse(
-        wrapped_stream(),
-        media_type="text/event-stream",
+    # 1. Create a Draft placeholder in 'processing' status
+    draft = Draft(
+        firm_id=user.firm_id,
+        created_by=user.id,
+        title=f"Draft: {data.technical_field or 'New Invention'}",
+        content="# Generating Draft...\nPlease wait while our expert system prepares your application.",
+        version=1,
+        status="processing"
     )
+    db.add(draft)
+    await db.flush()
+    await db.refresh(draft)
+
+    # 2. Trigger Inngest Event
+    from app.services.inngest_client import inngest_client
+    import inngest
+
+    # Prepare data for Inngest
+    # We pass all IDs and parameters so the background job has full context
+    await inngest_client.send(
+        inngest.Event(
+            name="patent.draft.generate",
+            data={
+                "draft_id": str(draft.id),
+                "firm_id": str(user.firm_id),
+                "user_id": str(user.id),
+                "invention_description": description,
+                "technical_field": data.technical_field,
+                "prior_art_context": data.prior_art_context,
+                "claim_style": data.claim_style,
+                "spec_context": data.spec_context,
+                "jurisdiction": data.jurisdiction,
+                "patent_id": data.patent_id,
+            }
+        )
+    )
+
+    return DraftResponse.model_validate(draft)
 
 
 @router.delete("/{draft_id}", status_code=204)

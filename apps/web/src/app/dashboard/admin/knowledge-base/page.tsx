@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import { useAuth } from "@clerk/nextjs";
+import { useAuth } from "@/hooks/useAuth";
 import {
   Upload,
   BookOpen,
@@ -28,6 +28,7 @@ interface LegalSource {
   version: string | null;
   is_active: boolean;
   chunk_count: number;
+  status: "active" | "processing" | "failed";
   source_updated_at: string | null;
   is_stale: boolean;
   created_at: string;
@@ -53,7 +54,7 @@ const DOC_TYPES = [
 ];
 
 export default function KnowledgeBasePage() {
-  const { getToken } = useAuth();
+  const { token } = useAuth();
   const [sources, setSources] = useState<LegalSource[]>([]);
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState("");
@@ -73,7 +74,6 @@ export default function KnowledgeBasePage() {
   const fetchSources = useCallback(async () => {
     setLoading(true);
     try {
-      const token = await getToken();
       const res = await fetch(
         `${API_URL}/api/v1/knowledge-base/sources?include_inactive=true`,
         { headers: token ? { Authorization: `Bearer ${token}` } : {} }
@@ -101,7 +101,6 @@ export default function KnowledgeBasePage() {
     setUploading(true);
     setError(null);
     try {
-      const token = await getToken();
       const formData = new FormData();
       formData.append("file", uploadFile);
       formData.append("jurisdiction", uploadJurisdiction);
@@ -123,7 +122,7 @@ export default function KnowledgeBasePage() {
 
       const result = await res.json();
       setSuccess(
-        `"${uploadTitle}" uploaded successfully — ${result.chunks} chunks, ${result.embeddings_stored} embeddings`
+        `"${uploadTitle}" upload accepted. Ingestion has started in the background.`
       );
       setShowUpload(false);
       setUploadFile(null);
@@ -139,7 +138,6 @@ export default function KnowledgeBasePage() {
 
   const toggleActive = async (source: LegalSource) => {
     try {
-      const token = await getToken();
       const res = await fetch(
         `${API_URL}/api/v1/knowledge-base/sources/${source.id}`,
         {
@@ -167,7 +165,6 @@ export default function KnowledgeBasePage() {
     if (!confirm(`Delete "${source.title}" and all its ${source.chunk_count} chunks? This cannot be undone.`)) return;
 
     try {
-      const token = await getToken();
       await fetch(`${API_URL}/api/v1/knowledge-base/sources/${source.id}`, {
         method: "DELETE",
         headers: token ? { Authorization: `Bearer ${token}` } : {},
@@ -485,6 +482,16 @@ export default function KnowledgeBasePage() {
                     <span style={{ fontSize: 10, padding: "1px 5px", borderRadius: 4, background: "var(--bg-tertiary)", color: "var(--text-tertiary)" }}>
                       {source.doc_type}
                     </span>
+                    {source.status === "processing" && (
+                      <span style={{ 
+                        fontSize: 10, padding: "1px 5px", borderRadius: 4, 
+                        background: "rgba(59,130,246,0.1)", color: "var(--brand-400)",
+                        display: "flex", alignItems: "center", gap: 4
+                      }}>
+                        <RefreshCw style={{ width: 10, height: 10, animation: "spin 2s linear infinite" }} />
+                        indexing...
+                      </span>
+                    )}
                   </div>
                   <div style={{ fontSize: 11, color: "var(--text-tertiary)", marginTop: 2 }}>
                     {source.chunk_count} chunks · uploaded {new Date(source.created_at).toLocaleDateString()}

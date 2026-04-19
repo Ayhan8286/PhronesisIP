@@ -21,6 +21,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import get_db
 from app.auth import get_active_firm_user, get_system_admin, CurrentUser, get_current_user
 from app.models.legal_source import LegalSource, LegalSourceChunk
+import inngest
+from app.services.storage import upload_to_r2
+from app.services.inngest_client import inngest_client
 from app.schemas.legal_source import (
     LegalSourceResponse,
     LegalSourceUpdate,
@@ -167,7 +170,8 @@ async def upload_legal_source(
         version=version,
         source_updated_at=parsed_date,
         uploaded_by=db_user_id,
-        is_active=True,
+        is_active=False,  # Start inactive until processing completes
+        status="processing",
     )
     
     try:
@@ -179,40 +183,46 @@ async def upload_legal_source(
         raise HTTPException(status_code=500, detail=f"Database constraint error: {str(e)}")
 
     try:
-        # Read PDF and run ingestion pipeline
+        # Step 1: Upload PDF to R2 Storage (Handles multi-MB files like MPEP)
         pdf_bytes = await file.read()
-        ingestion_result = await ingest_legal_source(
-            pdf_bytes=pdf_bytes,
-            source_id=source.id,
-            firm_id=db_firm_id,
-            user_id=user.id,
-            db=db,
+        r2_key = f"legal_sources/{source.id}.pdf"
+        await upload_to_r2(pdf_bytes, r2_key)
+        
+        # Step 2: Update source with R2 key
+        source.r2_key = r2_key
+        db.add(source)
+        await db.commit()
+
+        # Step 3: Dispatch Throttled Ingestion Job (Non-blocking)
+        # This allows the API to return immediately while the background job 
+        # manages Voyage AI rate limits (10k tokens/min).
+        await inngest_client.send(
+            inngest.Event(
+                name="legal.source.ingest",
+                data={
+                    "source_id": str(source.id),
+                    "firm_id": str(db_firm_id) if db_firm_id else None,
+                    "user_id": str(user.id),
+                },
+            )
         )
 
-        if "error" in ingestion_result:
-            raise ValueError(ingestion_result["error"])
-
     except Exception as e:
-        # If ingestion fails (e.g., Voyage RateLimitError, OOM, etc), delete the source record cleanly
+        # Cleanup on failure
         await db.rollback()
         try:
-            # We must use a new transaction or the raw delete if we've rolled back
-            await db.execute(text("DELETE FROM legal_sources WHERE id = :sid"), {"sid": str(source.id)})
-            await db.commit()
+             await db.execute(text("DELETE FROM legal_sources WHERE id = :sid"), {"sid": str(source.id)})
+             await db.commit()
         except:
-            await db.rollback()
-
-        error_msg = str(e)
-        if "RateLimitError" in error_msg or "rate limit" in error_msg.lower() or "payment method" in error_msg.lower() or "10K TPM" in error_msg:
-            raise HTTPException(status_code=429, detail="Voyage AI limits Free Tier testing to 3 uploads per minute and 10k tokens. Only 1 document per minute is allowed in Dev Mode.")
-        raise HTTPException(status_code=400, detail=f"Ingestion failed: {error_msg}")
+             pass
+        raise HTTPException(status_code=500, detail=f"Failed to initiate background ingestion: {str(e)}")
 
     return {
-        "message": "Legal source uploaded and indexed successfully",
+        "message": "Legal source upload accepted. Processing started in the background (MPEP large files take ~15-20m).",
         "source_id": str(source.id),
         "title": title,
         "jurisdiction": jurisdiction,
-        **ingestion_result,
+        "status": "processing"
     }
 
 

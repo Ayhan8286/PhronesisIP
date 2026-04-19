@@ -35,6 +35,7 @@ class LegalSource(Base):
     title: Mapped[str] = mapped_column(String(500), nullable=False)
     version: Mapped[Optional[str]] = mapped_column(String(50))
     r2_key: Mapped[Optional[str]] = mapped_column(String(500))
+    status: Mapped[str] = mapped_column(String(50), default="active") # active | processing | failed
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     chunk_count: Mapped[int] = mapped_column(Integer, default=0)
     source_updated_at: Mapped[Optional[datetime]] = mapped_column(

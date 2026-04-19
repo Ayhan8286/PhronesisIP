@@ -35,6 +35,9 @@ async def diagnostic_check(
             "CLERK_ISSUER_SET": bool(settings.CLERK_ISSUER),
             "CLERK_SECRET_SET": bool(settings.CLERK_SECRET_KEY),
             "DATABASE_URL_SET": bool(settings.DATABASE_URL),
+            "XAI_API_KEY_SET": bool(settings.XAI_API_KEY),
+            "EMBEDDING_PROVIDER": settings.EMBEDDING_PROVIDER,
+            "LOCAL_EMBEDDING_MODEL": settings.LOCAL_EMBEDDING_MODEL,
             "GOOGLE_API_KEY_SET": bool(settings.GOOGLE_API_KEY),
         },
         "database": {

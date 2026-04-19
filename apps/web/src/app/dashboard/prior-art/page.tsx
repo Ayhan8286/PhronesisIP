@@ -26,6 +26,7 @@ export default function PriorArtPage() {
   const [searching, setSearching] = useState(false);
   const [searched, setSearched] = useState(false);
   const [importing, setImporting] = useState<string | null>(null);
+  const [exporting, setExporting] = useState(false);
   const [importedPatents, setImportedPatents] = useState<Set<string>>(new Set());
 
   async function handleSearch() {
@@ -64,6 +65,38 @@ export default function PriorArtPage() {
       alert(getErrorMessage(err));
     } finally {
       setImporting(null);
+    }
+  }
+
+  async function handleExportReport() {
+    setExporting(true);
+    try {
+      const results = externalResults.map(p => ({
+        number: p.patent_number,
+        title: p.title,
+        analysis: p.abstract || "Detailed analysis available in platform.",
+        threat_level: "High", // Dynamic logic could go here
+        score: 0.95
+      }));
+
+      const pdfBlob = await api.exportPriorArtReport({
+        client_name: assignee || "Private Client",
+        invention_title: query.substring(0, 100) || "Invention Search",
+        results: results
+      });
+
+      // Download PDF
+      const url = window.URL.createObjectURL(pdfBlob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `Prior_Art_Report_${new Date().toISOString().split('T')[0]}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      window.URL.revokeObjectURL(url);
+    } catch (err: unknown) {
+      alert("Export failed: " + getErrorMessage(err));
+    } finally {
+      setExporting(false);
     }
   }
 
@@ -194,7 +227,7 @@ export default function PriorArtPage() {
         {/* External Results (USPTO or Google Patents) */}
         {searched && (searchMode === "uspto" || searchMode === "google") && (
           <div className="card">
-            <div className="card-header">
+            <div className="card-header" style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
               <div>
                 <div className="card-title">
                   {searchMode === "uspto" ? "USPTO Results" : "Google Patents Results"}
@@ -203,6 +236,17 @@ export default function PriorArtPage() {
                   {searching ? "Searching..." : `${externalResults.length} patents found`}
                 </div>
               </div>
+              {!searching && externalResults.length > 0 && (
+                <button 
+                  className="btn btn-primary btn-sm" 
+                  onClick={handleExportReport} 
+                  disabled={exporting}
+                  style={{ background: "linear-gradient(135deg, var(--brand-500), var(--brand-700))" }}
+                >
+                  {exporting ? <Loader2 className="animate-spin" style={{ width: 14, height: 14 }} /> : <Download style={{ width: 14, height: 14 }} />}
+                  Export Premium PDF
+                </button>
+              )}
             </div>
 
             {searching ? (

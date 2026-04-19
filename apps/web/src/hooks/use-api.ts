@@ -1,4 +1,4 @@
-import { useAuth } from "@clerk/nextjs";
+import { useAuth } from "@/hooks/useAuth";
 import { createApi } from "@/lib/api";
 import { useMemo } from "react";
 
@@ -8,7 +8,7 @@ import { useMemo } from "react";
  * while injecting fresh tokens for every request.
  */
 export function useApi() {
-  const { getToken } = useAuth();
+  const { token } = useAuth();
 
   const api = useMemo(() => {
     const staticApi = createApi();
@@ -22,8 +22,6 @@ export function useApi() {
       if (typeof originalMethod === "function") {
         // @ts-ignore - dynamic proxying requires some casting
         wrappedApi[key] = async (...args: any[]) => {
-          const token = await getToken();
-          
           // Create a fresh instance for the call with the new token
           const authenticatedApi = createApi(token || undefined);
           // @ts-ignore - dynamic method access
@@ -33,7 +31,7 @@ export function useApi() {
     });
 
     return wrappedApi;
-  }, [getToken]);
+  }, [token]);
 
   return api;
 }

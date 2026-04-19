@@ -46,6 +46,16 @@ async def upload_to_r2(
     return key
 
 
+async def download_from_r2(key: str) -> bytes:
+    """Download a file from Cloudflare R2."""
+    client = get_r2_client()
+    response = client.get_object(
+        Bucket=settings.R2_BUCKET_NAME,
+        Key=key,
+    )
+    return response["Body"].read()
+
+
 async def get_presigned_url(key: str, expires_in: int = 900) -> str:
     """
     Generate a presigned URL for downloading a file from R2.

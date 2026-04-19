@@ -1,0 +1,28 @@
+# fly.toml app configuration file generated for phronesis-api
+# Optimized for Serverless API-based Architecture (Jina AI + Groq)
+
+app = "phronesis-api"
+primary_region = "lax"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  auto_stop_machines = true
+  auto_start_machines = true
+  min_machines_running = 0
+  processes = ["app"]
+
+# REMOVED: [mounts] model_cache - no longer needed with Jina API
+
+[env]
+  PORT = "8080"
+  APP_ENV = "production"
+  # Migration to Jina AI v3 + Groq
+  EMBEDDING_MODEL = "jina-embeddings-v3"
+  LLM_PROVIDER = "groq"
+  LLM_MODEL = "llama-3.3-70b-versatile"
+  # Authentication
+  NEXTAUTH_URL = "https://phronesis-api.fly.dev"

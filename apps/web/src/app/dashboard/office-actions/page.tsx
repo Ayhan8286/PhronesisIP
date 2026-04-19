@@ -72,29 +72,48 @@ export default function OfficeActionsPage() {
     setGeneratingFor(oa.id);
     setResponseText("");
     setExpandedOA(oa.id);
-    setTrustPanel(null); // reset trust panel
+    setTrustPanel(null);
 
     try {
-      await api.generateOAResponse(
-        oa.id,
-        { response_strategy: "argue", additional_context: "", jurisdiction: jurisdiction },
-        (chunk) => {
-          // If error stream payload arrives
-          if (chunk.includes('{"error"')) {
-            try {
-               const errPayload = JSON.parse(chunk);
-               if (errPayload.error) {
-                 setResponseText((prev) => prev + "\n[SYSTEM ERROR]: " + errPayload.error + "\n");
-               }
-            } catch {}
-          } else {
-             setResponseText((prev) => prev + chunk);
+      // 1. Kick off the background job
+      const draft = await api.generateOAResponse(oa.id, {
+        response_strategy: "argue",
+        additional_context: "",
+        jurisdiction: jurisdiction
+      });
+
+      setResponseText("# Analyzing Rejections...\nJob ID: " + draft.id + "\nPlease wait while our expert system analyzes the USPTO rejection...");
+
+      // 2. Poll for completion
+      let attempts = 0;
+      const pollInterval = setInterval(async () => {
+        attempts++;
+        try {
+          const updatedDraft = await api.getOAResponseDraft(oa.id, draft.id);
+          
+          if (updatedDraft.status === "completed") {
+            clearInterval(pollInterval);
+            setGeneratingFor(null);
+            setResponseText(updatedDraft.draft_content || updatedDraft.content);
+            
+            // Refresh list to show 'responded' status
+            loadData();
+          } else if (updatedDraft.status === "failed") {
+            clearInterval(pollInterval);
+            setGeneratingFor(null);
+            setResponseText("[ERROR]: AI generation failed. This usually happens if the Office Action text is extremely large or the LLM hit a safety filter.");
           }
-          if (responseRef.current) responseRef.current.scrollTop = responseRef.current.scrollHeight;
-        },
-        () => setGeneratingFor(null),
-        (sourcesData: any) => setTrustPanel(sourcesData)
-      );
+
+          if (attempts > 120) { // 6 minutes limit
+            clearInterval(pollInterval);
+            setGeneratingFor(null);
+            setResponseText("[TIMEOUT]: Response generation is taking a long time. It will continue in the background. Check back in a few minutes.");
+          }
+        } catch (err) {
+            console.error("Polling error:", err);
+        }
+      }, 3000);
+
     } catch (err: unknown) {
       alert(getErrorMessage(err));
       setGeneratingFor(null);

@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useUser, useClerk, OrganizationSwitcher, useOrganization } from "@clerk/nextjs";
+import { useAuth } from "@/hooks/useAuth";
 import {
   LayoutDashboard,
   Search,
@@ -14,7 +14,6 @@ import {
   Settings,
   HelpCircle,
   LogOut,
-  Building2,
   ShieldCheck,
   BookOpen
 } from "lucide-react";
@@ -70,17 +69,13 @@ const navigation = [
 
 export default function Sidebar() {
   const pathname = usePathname();
-  const { user } = useUser();
-  const { signOut } = useClerk();
-  const { organization } = useOrganization();
+  const { user, logout } = useAuth();
 
-  // Show Admin link if the active organization is "box mation"
-  const isAdmin = organization?.name?.toLowerCase().includes("box mation");
+  // Single-user internal tool: user is always admin
+  const isAdmin = true;
 
-  const initials = user?.firstName && user?.lastName
-    ? `${user.firstName[0]}${user.lastName[0]}`
-    : user?.emailAddresses?.[0]?.emailAddress?.substring(0, 2).toUpperCase() || "??";
-  const displayName = user?.fullName || user?.emailAddresses?.[0]?.emailAddress || "User";
+  const initials = "AD";
+  const displayName = "Admin User";
 
   return (
     <aside className="sidebar">
@@ -88,37 +83,6 @@ export default function Sidebar() {
       <div className="sidebar-header">
         <div className="sidebar-logo">IP</div>
         <span className="sidebar-title">PhronesisIP</span>
-      </div>
-
-      {/* Organization Switcher */}
-      <div style={{ padding: "0 12px 20px", borderBottom: "1px solid var(--glass-border)", marginBottom: 12 }}>
-        <OrganizationSwitcher
-          hidePersonal
-          afterCreateOrganizationUrl="/dashboard"
-          afterSelectOrganizationUrl="/dashboard"
-          appearance={{
-            elements: {
-              rootBox: { width: "100%", display: "flex", justifyContent: "center", alignItems: "center" },
-              organizationSwitcherTrigger: {
-                width: "100%",
-                padding: "8px 12px",
-                borderRadius: "var(--radius-md)",
-                background: "var(--bg-tertiary)",
-                border: "1px solid var(--glass-border)",
-                color: "var(--text-primary)",
-                "&:hover": {
-                  background: "var(--bg-hover)",
-                },
-              },
-              organizationPreviewTextContainer: {
-                color: "var(--text-primary)",
-              },
-              organizationSwitcherTriggerIcon: {
-                color: "var(--text-tertiary)",
-              },
-            },
-          }}
-        />
       </div>
 
       {/* Navigation */}
@@ -228,7 +192,7 @@ export default function Sidebar() {
             </div>
           </div>
           <button
-            onClick={() => signOut()}
+            onClick={() => logout()}
             className="btn btn-ghost btn-icon"
             style={{ flexShrink: 0, width: 28, height: 28 }}
             title="Sign out"

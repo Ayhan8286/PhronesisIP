@@ -1,7 +1,8 @@
 import type { Metadata } from "next";
-import { ClerkProvider } from "@clerk/nextjs";
 import { Inter } from "next/font/google";
 import "./globals.css";
+import { AuthProvider } from "@/hooks/useAuth";
+import { Providers } from "@/components/Providers";
 
 const inter = Inter({
   subsets: ["latin"],
@@ -14,31 +15,18 @@ export const metadata: Metadata = {
     "Accelerate patent prosecution and portfolio management with AI-powered drafting, office action responses, and prior art analysis.",
 };
 
-import { Providers } from "@/components/Providers";
-
 export default function RootLayout({
   children,
 }: Readonly<{
   children: React.ReactNode;
 }>) {
   return (
-    <ClerkProvider
-      publishableKey={process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY}
-      appearance={{
-        variables: {
-          colorPrimary: "#6366f1",
-          colorBackground: "#111118",
-          colorText: "#f1f5f9",
-          colorInputBackground: "#1a1a24",
-          colorInputText: "#f1f5f9",
-        },
-      }}
-    >
-      <html lang="en" className={inter.variable}>
-        <body>
+    <html lang="en" className={inter.variable}>
+      <body>
+        <AuthProvider>
           <Providers>{children}</Providers>
-        </body>
-      </html>
-    </ClerkProvider>
+        </AuthProvider>
+      </body>
+    </html>
   );
 }

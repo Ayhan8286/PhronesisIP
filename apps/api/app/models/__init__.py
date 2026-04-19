@@ -12,6 +12,7 @@ from app.models.analysis import AnalysisWorkflow, ProductDescription, ClaimAnaly
 from app.models.portfolio import Client, Portfolio, PortfolioPatent
 from app.models.incident import SystemIncident
 from app.models.legal_source import LegalSource, LegalSourceChunk
+from app.models.service_order import ServiceOrder
 
 __all__ = [
     "Base",
@@ -40,4 +41,5 @@ __all__ = [
     "SystemIncident",
     "LegalSource",
     "LegalSourceChunk",
+    "ServiceOrder",
 ]

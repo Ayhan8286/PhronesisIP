@@ -34,23 +34,32 @@ class Settings(BaseSettings):
     # --- Auth (Clerk) ---
     CLERK_SECRET_KEY: str = ""
     CLERK_PUBLISHABLE_KEY: str = ""
-    # IMPORTANT: do not default to a development Clerk instance in production.
-    # Set these via environment variables on your deployment.
     CLERK_JWKS_URL: str = ""
     CLERK_ISSUER: str = ""
-    SYSTEM_ADMIN_ORG_ID: str = ""  # The Clerk Org ID for PhronesisIP internal management
-    SYSTEM_ADMIN_EMAILS: Any = []  # Optional email whitelist (comma-separated string)
+    
+    # --- Auth (Custom JWT replaces Clerk) ---
+    JWT_SECRET: str = "super-secret-key-for-internal-tool"
+    JWT_ALGORITHM: str = "HS256"
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 24 * 7  # 1 week
+    ADMIN_PASSWORD_HASH: str = "" # Set via env (bcrypt)
+    STATIC_FIRM_ID: str = "a17772ca-86b5-4aa3-ae04-d7e8d7dc8ee7"
+    STATIC_USER_ID: str = "00000000-0000-0000-0000-000000000001"
 
     # --- AI / Embeddings ---
-    VOYAGE_API_KEY: str = ""
-    VOYAGE_MODEL: str = "voyage-law-2"
-    VOYAGE_EMBEDDING_DIM: int = 1024
+    EMBEDDING_PROVIDER: str = "local"
+    JINA_API_KEY: str = ""
+    EMBEDDING_MODEL: str = "jina-embeddings-v3"
+    LOCAL_EMBEDDING_MODEL: str = "BAAI/bge-m3"
+    EMBEDDING_QUERY_PREFIX: str = "Represent this sentence for searching relevant passages: "
+    EMBEDDING_DIM: int = 1024
 
-    # --- LLM ---
-    GOOGLE_API_KEY: str = ""  # Gemini
-    ANTHROPIC_API_KEY: str = ""  # Claude (production)
-    LLM_PROVIDER: str = "gemini"  # "gemini" or "claude"
-    LLM_MODEL: str = "gemini-2.5-flash"
+    # --- LLM (xAI/Groq) ---
+    XAI_API_KEY: str = ""
+    XAI_BASE_URL: str = "https://api.x.ai/v1"
+    GROQ_API_KEY: str = ""
+    GOOGLE_API_KEY: str = ""
+    LLM_PROVIDER: str = "xai"
+    LLM_MODEL: str = "grok-4.20-reasoning"
 
     # --- Storage (Cloudflare R2) ---
     R2_ACCOUNT_ID: str = ""
@@ -83,12 +92,14 @@ class Settings(BaseSettings):
                 name
                 for name in [
                     "DATABASE_URL",
-                    "CLERK_SECRET_KEY",
-                    "CLERK_JWKS_URL",
-                    "CLERK_ISSUER",
+                    "ADMIN_PASSWORD_HASH",
                 ]
                 if not getattr(self, name)
             ]
+            if self.LLM_PROVIDER == "xai" and not self.XAI_API_KEY:
+                missing.append("XAI_API_KEY")
+            if self.LLM_PROVIDER == "groq" and not self.GROQ_API_KEY:
+                missing.append("GROQ_API_KEY")
             if missing:
                 raise ValueError(
                     "Missing required production environment variables: "
@@ -114,6 +125,7 @@ class Settings(BaseSettings):
     class Config:
         env_file = ".env"
         case_sensitive = True
+        extra = "ignore"
 
 
 settings = Settings()
